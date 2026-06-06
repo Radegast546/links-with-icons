@@ -1,0 +1,25 @@
+.links-with-icons-favicon,
+.links-with-icons-osicon {
+    vertical-align: text-bottom;
+    margin-inline-end: 0.25em;
+    display: inline-block;
+    cursor: pointer;
+    line-height: 0;
+}
+
+.links-with-icons-favicon img,
+.links-with-icons-osicon img,
+.links-with-icons-favicon svg,
+.links-with-icons-osicon svg {
+    display: inline-block;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    vertical-align: top;
+}
+
+.links-with-icons-favicon svg,
+.links-with-icons-osicon svg {
+    stroke-width: 2.2px;
+}
