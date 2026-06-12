@@ -1037,11 +1037,11 @@ Write-Output ([ShellIcon]::GetBase64Icon('${escapedPath}', ${psBool}, ${imgListI
             const buffer = Buffer.from(psScript, 'utf16le');
             const encodedCommand = buffer.toString('base64');
 
-            const req = (window as unknown as { require: (module: string) => any })['require'];
+            const req = (window as unknown as { require: (module: string) => unknown })['require'];
             const childProcess = req('child_process') as {
-                exec: (cmd: string, cb: (error: any, stdout: string) => void) => void;
+                exec: (cmd: string, cb: (error: Error | null, stdout: string) => void) => void;
             };
-            childProcess.exec(`powershell -ExecutionPolicy Bypass -EncodedCommand ${encodedCommand}`, (error: any, stdout: string) => {
+            childProcess.exec(`powershell -ExecutionPolicy Bypass -EncodedCommand ${encodedCommand}`, (error: Error | null, stdout: string) => {
                 this.activeExtractions--;
                 this.drainExtractionQueue();
 
