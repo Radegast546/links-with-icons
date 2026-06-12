@@ -1,7 +1,7 @@
 {
 	"id": "links-with-icons",
 	"name": "Links with Icons",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"minAppVersion": "0.15.0",
 	"description": "Dynamically shows native OS file icons and website favicons for links in your notes.",
 	"author": "Radegast546",

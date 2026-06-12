@@ -1,6 +1,6 @@
 {
   "name": "links-with-icons",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Dynamically shows native OS file icons and website favicons for links in your notes.",
   "main": "main.js",
   "scripts": {
