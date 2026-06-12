@@ -1,7 +1,14 @@
 import { Plugin, FileSystemAdapter, App, PluginSettingTab, Setting, Notice, setIcon, Platform } from 'obsidian';
 import { ViewUpdate, PluginValue, EditorView, ViewPlugin, DecorationSet, Decoration, WidgetType } from '@codemirror/view';
 import { RangeSetBuilder } from '@codemirror/state';
-import * as path from 'path';
+
+function getExtension(filePath: string): string {
+    const lastDot = filePath.lastIndexOf('.');
+    if (lastDot === -1) return '';
+    const lastSlash = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'));
+    if (lastSlash > lastDot) return '';
+    return filePath.slice(lastDot);
+}
 
 // ── Settings ──────────────────────────────────────────────────────────
 
@@ -42,7 +49,7 @@ function getDomain(url: string): string {
         const parsed = new URL(url);
         return parsed.hostname;
     } catch {
-        const match = url.match(/^(?:https?:\/\/)?(?:www\.)?([^\/\?#]+)/i);
+        const match = url.match(/^(?:https?:\/\/)?(?:www\.)?([^/?#]+)/i);
         return match ? match[1] : '';
     }
 }
@@ -168,12 +175,12 @@ class IconWidget extends WidgetType {
         }
 
         const sizeStr = emSize + 'em';
-        const span = document.createElement('span');
+        const span = activeDocument.createElement('span');
         span.addClass('links-with-icons-osicon');
         span.style.width = sizeStr;
         span.style.height = sizeStr;
 
-        const ext = this.useAttributes ? this.queryPath : path.extname(this.queryPath).toLowerCase();
+        const ext = this.useAttributes ? this.queryPath : getExtension(this.queryPath).toLowerCase();
         const isFolder = !ext && !this.useAttributes;
         const cacheKey = this.queryPath + (this.useAttributes ? "_attr" : "_real");
 
@@ -181,16 +188,16 @@ class IconWidget extends WidgetType {
             const iconId = this.plugin.settings.folderIconStyle;
             setIcon(span, iconId);
         } else if (this.plugin.iconCache[cacheKey]) {
-            const img = document.createElement('img');
+            const img = activeDocument.createElement('img');
             img.src = this.plugin.iconCache[cacheKey];
             span.appendChild(img);
         } else if (!Platform.isWin) {
             const iconId = getLucideIconForExtension(ext, isFolder);
             setIcon(span, iconId);
         } else {
-            this.plugin.getIconForFile(this.queryPath, this.useAttributes).then((iconData) => {
+            void this.plugin.getIconForFile(this.queryPath, this.useAttributes).then((iconData) => {
                 if (iconData && span.isConnected) {
-                    const img = document.createElement('img');
+                    const img = activeDocument.createElement('img');
                     img.src = iconData;
                     span.empty();
                     span.appendChild(img);
@@ -218,7 +225,7 @@ class IconWidget extends WidgetType {
                 }
                 window.open(target);
             } else {
-                this.plugin.app.workspace.openLinkText(this.originalLink, sourcePath);
+                void this.plugin.app.workspace.openLinkText(this.originalLink, sourcePath);
             }
         });
 
@@ -259,12 +266,12 @@ class FaviconWidget extends WidgetType {
         }
 
         const sizeStr = emSize + 'em';
-        const span = document.createElement('span');
+        const span = activeDocument.createElement('span');
         span.addClass('links-with-icons-favicon');
         span.style.width = sizeStr;
         span.style.height = sizeStr;
 
-        const img = document.createElement('img');
+        const img = activeDocument.createElement('img');
         img.src = getFaviconUrl(this.plugin.settings.faviconProvider, this.domain, 64);
         img.onload = () => {
             if (this.plugin.settings.faviconProvider === 'google' && img.naturalWidth === 16 && img.naturalHeight === 16) {
@@ -521,10 +528,10 @@ class LinksWithIconsSettingTab extends PluginSettingTab {
         const { containerEl } = this;
         containerEl.empty();
 
-        containerEl.createEl('h2', { text: 'Links with Icons — Settings' });
+        new Setting(containerEl).setName('Links with Icons — Settings').setHeading();
 
         // ── SECTION: GENERAL ──
-        containerEl.createEl('h3', { text: 'General Settings' });
+        new Setting(containerEl).setName('General Settings').setHeading();
 
         new Setting(containerEl)
             .setName('Icon size')
@@ -549,7 +556,7 @@ class LinksWithIconsSettingTab extends PluginSettingTab {
                 }));
 
         // ── SECTION: LOCAL FILE ICONS ──
-        containerEl.createEl('h3', { text: 'Local File Icons' });
+        new Setting(containerEl).setName('Local File Icons').setHeading();
 
         new Setting(containerEl)
             .setName('Show icons on internal links')
@@ -609,7 +616,7 @@ class LinksWithIconsSettingTab extends PluginSettingTab {
                 }));
 
         // ── SECTION: WEB FAVICONS ──
-        containerEl.createEl('h3', { text: 'Web URL Favicons' });
+        new Setting(containerEl).setName('Web URL Favicons').setHeading();
 
         new Setting(containerEl)
             .setName('Enable web favicons')
@@ -662,7 +669,7 @@ class LinksWithIconsSettingTab extends PluginSettingTab {
                 }));
 
         // ── SECTION: CACHE MANAGEMENT ──
-        containerEl.createEl('h3', { text: 'Local Icon Cache' });
+        new Setting(containerEl).setName('Local Icon Cache').setHeading();
 
         new Setting(containerEl)
             .setName('Persistent disk cache')
@@ -672,7 +679,7 @@ class LinksWithIconsSettingTab extends PluginSettingTab {
                 .onChange(async (value) => {
                     this.plugin.settings.enableDiskCache = value;
                     await this.plugin.saveSettings();
-                    if (value) await this.plugin.saveDiskCache();
+                    if (value) this.plugin.saveDiskCache();
                 }));
 
         const cacheCount = Object.keys(this.plugin.iconCache).length;
@@ -761,12 +768,10 @@ export default class LinksWithIconsPlugin extends Plugin {
                     const scales = [1.0, 2.0, 1.7, 1.4, 1.2, 1.1, 1.0];
                     const baseSize = this.settings.iconSize;
                     
-                    let targetSize = baseSize;
                     let emSize = baseSize / 16;
 
                     if (this.settings.enableDynamicSizing) {
                         if (headingLevel > 0) {
-                            targetSize = Math.round(baseSize * scales[headingLevel]);
                             emSize = baseSize / 16;
                         }
                     } else {
@@ -775,12 +780,12 @@ export default class LinksWithIconsPlugin extends Plugin {
                         }
                     }
 
-                    const span = document.createElement('span');
+                    const span = activeDocument.createElement('span');
                     span.addClass('links-with-icons-favicon');
                     span.style.width = emSize + 'em';
                     span.style.height = emSize + 'em';
 
-                    const img = document.createElement('img');
+                    const img = activeDocument.createElement('img');
                     img.src = getFaviconUrl(this.settings.faviconProvider, domain, 64);
                     img.onload = () => {
                         if (this.settings.faviconProvider === 'google' && img.naturalWidth === 16 && img.naturalHeight === 16) {
@@ -805,7 +810,7 @@ export default class LinksWithIconsPlugin extends Plugin {
                 if (isLocalExternal && !this.settings.enableExternalLinks) return;
 
                 if (isInternal || isLocalExternal) {
-                    const ext = path.extname(linkText).toLowerCase();
+                    const ext = getExtension(linkText).toLowerCase();
                     if (ext === '.md') return;
 
                     const blacklist = this.getBlacklistedSet();
@@ -816,7 +821,7 @@ export default class LinksWithIconsPlugin extends Plugin {
                     let useAttributes = false;
 
                     if (absPath) {
-                        const resolvedExt = path.extname(absPath).toLowerCase();
+                        const resolvedExt = getExtension(absPath).toLowerCase();
                         if (resolvedExt === '.md') return;
                         if (resolvedExt && blacklist.has(resolvedExt)) return;
                         if (!resolvedExt && !this.settings.enableFolderIcons) return;
@@ -842,12 +847,10 @@ export default class LinksWithIconsPlugin extends Plugin {
                     const scales = [1.0, 2.0, 1.7, 1.4, 1.2, 1.1, 1.0];
                     const baseSize = this.settings.iconSize;
                     
-                    let targetSize = baseSize;
                     let emSize = baseSize / 16;
 
                     if (this.settings.enableDynamicSizing) {
                         if (headingLevel > 0) {
-                            targetSize = Math.round(baseSize * scales[headingLevel]);
                             emSize = baseSize / 16;
                         }
                     } else {
@@ -856,12 +859,12 @@ export default class LinksWithIconsPlugin extends Plugin {
                         }
                     }
 
-                    const span = document.createElement('span');
+                    const span = activeDocument.createElement('span');
                     span.addClass('links-with-icons-osicon');
                     span.style.width = emSize + 'em';
                     span.style.height = emSize + 'em';
 
-                    const targetExt = useAttributes ? queryPath : path.extname(queryPath).toLowerCase();
+                    const targetExt = useAttributes ? queryPath : getExtension(queryPath).toLowerCase();
                     const isFolder = !targetExt && !useAttributes;
                     const cacheKey = queryPath + (useAttributes ? "_attr" : "_real");
 
@@ -869,16 +872,16 @@ export default class LinksWithIconsPlugin extends Plugin {
                         const iconId = this.settings.folderIconStyle;
                         setIcon(span, iconId);
                     } else if (this.iconCache[cacheKey]) {
-                        const img = document.createElement('img');
+                        const img = activeDocument.createElement('img');
                         img.src = this.iconCache[cacheKey];
                         span.appendChild(img);
                     } else if (!Platform.isWin) {
                         const iconId = getLucideIconForExtension(targetExt, isFolder);
                         setIcon(span, iconId);
                     } else {
-                        this.getIconForFile(queryPath, useAttributes).then((iconData) => {
+                        void this.getIconForFile(queryPath, useAttributes).then((iconData) => {
                             if (iconData && span.isConnected) {
-                                const img = document.createElement('img');
+                                const img = activeDocument.createElement('img');
                                 img.src = iconData;
                                 span.empty();
                                 span.appendChild(img);
@@ -901,8 +904,8 @@ export default class LinksWithIconsPlugin extends Plugin {
     }
 
     async loadSettings() {
-        const loaded = await this.loadData();
-        this.settings = Object.assign({}, DEFAULT_SETTINGS, loaded);
+        const loaded = (await this.loadData()) as Record<string, unknown> | null;
+        this.settings = Object.assign({}, DEFAULT_SETTINGS, loaded || {});
     }
 
     async saveSettings() {
@@ -919,7 +922,7 @@ export default class LinksWithIconsPlugin extends Plugin {
             const adapter = this.app.vault.adapter;
             if (await adapter.exists(this.diskCachePath)) {
                 const data = await adapter.read(this.diskCachePath);
-                const parsed = JSON.parse(data);
+                const parsed = JSON.parse(data) as Record<string, string>;
                 Object.assign(this.iconCache, parsed);
             }
         } catch (e) {
@@ -930,21 +933,23 @@ export default class LinksWithIconsPlugin extends Plugin {
     saveDiskCache(): void {
         if (!this.diskCachePath || !this.settings.enableDiskCache) return;
         // Debounce: wait 2 seconds of inactivity before writing to disk
-        if (this.saveDiskCacheTimer) clearTimeout(this.saveDiskCacheTimer);
-        this.saveDiskCacheTimer = setTimeout(async () => {
-            try {
-                const adapter = this.app.vault.adapter;
-                await adapter.write(this.diskCachePath, JSON.stringify(this.iconCache));
-            } catch (e) {
-                console.error('Links with Icons: failed to save disk cache', e);
-            }
+        if (this.saveDiskCacheTimer) window.clearTimeout(this.saveDiskCacheTimer);
+        this.saveDiskCacheTimer = window.setTimeout(() => {
+            (async () => {
+                try {
+                    const adapter = this.app.vault.adapter;
+                    await adapter.write(this.diskCachePath, JSON.stringify(this.iconCache));
+                } catch (e) {
+                    console.error('Links with Icons: failed to save disk cache', e);
+                }
+            })();
         }, 2000);
     }
 
     /** Flush any pending debounced disk cache write immediately. */
     async flushDiskCache(): Promise<void> {
         if (this.saveDiskCacheTimer) {
-            clearTimeout(this.saveDiskCacheTimer);
+            window.clearTimeout(this.saveDiskCacheTimer);
             this.saveDiskCacheTimer = null;
         }
         if (!this.diskCachePath || !this.settings.enableDiskCache) return;
@@ -1033,8 +1038,8 @@ Write-Output ([ShellIcon]::GetBase64Icon('${escapedPath}', ${psBool}, ${imgListI
             const buffer = Buffer.from(psScript, 'utf16le');
             const encodedCommand = buffer.toString('base64');
 
-            const { exec } = require('child_process');
-            exec(`powershell -ExecutionPolicy Bypass -EncodedCommand ${encodedCommand}`, (error, stdout) => {
+            const childProcess = (window as any).require('child_process');
+            childProcess.exec(`powershell -ExecutionPolicy Bypass -EncodedCommand ${encodedCommand}`, (error: any, stdout: string) => {
                 this.activeExtractions--;
                 this.drainExtractionQueue();
 
@@ -1062,7 +1067,7 @@ Write-Output ([ShellIcon]::GetBase64Icon('${escapedPath}', ${psBool}, ${imgListI
     getIconForFile(pathOrExt: string, useAttributes: boolean): Promise<string> {
         const cacheKey = pathOrExt + (useAttributes ? "_attr" : "_real");
         if (this.iconCache[cacheKey]) return Promise.resolve(this.iconCache[cacheKey]);
-        if (this.pendingRequests[cacheKey]) return this.pendingRequests[cacheKey];
+        if (this.pendingRequests[cacheKey] !== undefined) return this.pendingRequests[cacheKey];
 
         if (!Platform.isWin) {
             return Promise.resolve('');
@@ -1074,7 +1079,7 @@ Write-Output ([ShellIcon]::GetBase64Icon('${escapedPath}', ${psBool}, ${imgListI
         const promise = new Promise<string>((resolve) => {
             const startExtraction = () => {
                 this.activeExtractions++;
-                this.runExtraction(cacheKey, escapedPath, psBool).then(resolve);
+                void this.runExtraction(cacheKey, escapedPath, psBool).then(resolve);
             };
 
             if (this.activeExtractions < LinksWithIconsPlugin.MAX_CONCURRENT_EXTRACTIONS) {
