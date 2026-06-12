@@ -309,7 +309,7 @@ function buildDecorations(view, plugin) {
       while ((match = regex1.exec(text)) !== null) {
         const linkText = match[1].trim();
         const start = from + match.index;
-        const ext = path.extname(linkText).toLowerCase();
+        const ext = getExtension(linkText).toLowerCase();
         if (ext === ".md")
           continue;
         if (ext && blacklist.has(ext))
@@ -321,7 +321,7 @@ function buildDecorations(view, plugin) {
         const headingLevel = headingMatch ? headingMatch[1].length : 0;
         const absPath = resolveAbsolutePath(app, linkText);
         if (absPath) {
-          const resolvedExt = path.extname(absPath).toLowerCase();
+          const resolvedExt = getExtension(absPath).toLowerCase();
           if (resolvedExt === ".md")
             continue;
           if (resolvedExt && blacklist.has(resolvedExt))
@@ -379,14 +379,14 @@ function buildDecorations(view, plugin) {
         }
         if (!plugin.settings.enableExternalLinks)
           continue;
-        const ext = path.extname(linkText).toLowerCase();
+        const ext = getExtension(linkText).toLowerCase();
         if (ext === ".md")
           continue;
         if (ext && blacklist.has(ext))
           continue;
         const absPath = resolveAbsolutePath(app, linkText);
         if (absPath) {
-          const resolvedExt = path.extname(absPath).toLowerCase();
+          const resolvedExt = getExtension(absPath).toLowerCase();
           if (resolvedExt === ".md")
             continue;
           if (resolvedExt && blacklist.has(resolvedExt))
@@ -463,8 +463,7 @@ var LinksWithIconsSettingTab = class extends import_obsidian.PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    new import_obsidian.Setting(containerEl).setName("Links with Icons \u2014 Settings").setHeading();
-    new import_obsidian.Setting(containerEl).setName("General Settings").setHeading();
+    new import_obsidian.Setting(containerEl).setName("Plugin configuration").setHeading();
     new import_obsidian.Setting(containerEl).setName("Icon size").setDesc("Base size of the icons in pixels (relative to standard 16px text). The icons are rendered using relative sizing (em) to automatically scale with font size and note zoom levels.").addSlider((slider) => slider.setLimits(8, 64, 2).setValue(this.plugin.settings.iconSize).setDynamicTooltip().onChange(async (value) => {
       this.plugin.settings.iconSize = value;
       await this.plugin.saveSettings();
@@ -548,7 +547,7 @@ var _LinksWithIconsPlugin = class extends import_obsidian.Plugin {
     const adapter = this.app.vault.adapter;
     if (adapter instanceof import_obsidian.FileSystemAdapter) {
       const pluginDir = this.manifest.dir || "";
-      this.diskCachePath = path.join(pluginDir, "icon-cache.json");
+      this.diskCachePath = pluginDir + "/icon-cache.json";
     }
     await this.loadDiskCache();
     this.addSettingTab(new LinksWithIconsSettingTab(this.app, this));
@@ -705,7 +704,7 @@ var _LinksWithIconsPlugin = class extends import_obsidian.Plugin {
   }
   onunload() {
     console.log("unloading Links with Icons plugin");
-    this.flushDiskCache();
+    void this.flushDiskCache();
   }
   async loadSettings() {
     const loaded = await this.loadData();
@@ -736,7 +735,7 @@ var _LinksWithIconsPlugin = class extends import_obsidian.Plugin {
     if (this.saveDiskCacheTimer)
       window.clearTimeout(this.saveDiskCacheTimer);
     this.saveDiskCacheTimer = window.setTimeout(() => {
-      (async () => {
+      void (async () => {
         try {
           const adapter = this.app.vault.adapter;
           await adapter.write(this.diskCachePath, JSON.stringify(this.iconCache));
@@ -830,7 +829,8 @@ Write-Output ([ShellIcon]::GetBase64Icon('${escapedPath}', ${psBool}, ${imgListI
 `;
       const buffer = Buffer.from(psScript, "utf16le");
       const encodedCommand = buffer.toString("base64");
-      const childProcess = window.require("child_process");
+      const req = window["require"];
+      const childProcess = req("child_process");
       childProcess.exec(`powershell -ExecutionPolicy Bypass -EncodedCommand ${encodedCommand}`, (error, stdout) => {
         this.activeExtractions--;
         this.drainExtractionQueue();

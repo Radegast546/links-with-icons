@@ -362,7 +362,7 @@ function buildDecorations(view: EditorView, plugin: LinksWithIconsPlugin): Decor
             while ((match = regex1.exec(text)) !== null) {
                 const linkText = match[1].trim();
                 const start = from + match.index;
-                const ext = path.extname(linkText).toLowerCase();
+                const ext = getExtension(linkText).toLowerCase();
 
                 if (ext === '.md') continue;
                 if (ext && blacklist.has(ext)) continue;
@@ -375,7 +375,7 @@ function buildDecorations(view: EditorView, plugin: LinksWithIconsPlugin): Decor
 
                 const absPath = resolveAbsolutePath(app, linkText);
                 if (absPath) {
-                    const resolvedExt = path.extname(absPath).toLowerCase();
+                    const resolvedExt = getExtension(absPath).toLowerCase();
                     if (resolvedExt === '.md') continue;
                     if (resolvedExt && blacklist.has(resolvedExt)) continue;
                     if (!resolvedExt && !plugin.settings.enableFolderIcons) continue;
@@ -433,13 +433,13 @@ function buildDecorations(view: EditorView, plugin: LinksWithIconsPlugin): Decor
 
                 // Local external file links
                 if (!plugin.settings.enableExternalLinks) continue;
-                const ext = path.extname(linkText).toLowerCase();
+                const ext = getExtension(linkText).toLowerCase();
                 if (ext === '.md') continue;
                 if (ext && blacklist.has(ext)) continue;
 
                 const absPath = resolveAbsolutePath(app, linkText);
                 if (absPath) {
-                    const resolvedExt = path.extname(absPath).toLowerCase();
+                    const resolvedExt = getExtension(absPath).toLowerCase();
                     if (resolvedExt === '.md') continue;
                     if (resolvedExt && blacklist.has(resolvedExt)) continue;
                     if (!resolvedExt && !plugin.settings.enableFolderIcons) continue;
@@ -528,10 +528,9 @@ class LinksWithIconsSettingTab extends PluginSettingTab {
         const { containerEl } = this;
         containerEl.empty();
 
-        new Setting(containerEl).setName('Links with Icons — Settings').setHeading();
+        new Setting(containerEl).setName('Plugin configuration').setHeading();
 
         // ── SECTION: GENERAL ──
-        new Setting(containerEl).setName('General Settings').setHeading();
 
         new Setting(containerEl)
             .setName('Icon size')
@@ -724,7 +723,7 @@ export default class LinksWithIconsPlugin extends Plugin {
         const adapter = this.app.vault.adapter;
         if (adapter instanceof FileSystemAdapter) {
             const pluginDir = this.manifest.dir || '';
-            this.diskCachePath = path.join(pluginDir, 'icon-cache.json');
+            this.diskCachePath = pluginDir + '/icon-cache.json';
         }
         await this.loadDiskCache();
 
@@ -900,7 +899,7 @@ export default class LinksWithIconsPlugin extends Plugin {
 
     onunload() {
         console.log('unloading Links with Icons plugin');
-        this.flushDiskCache();
+        void this.flushDiskCache();
     }
 
     async loadSettings() {
@@ -935,7 +934,7 @@ export default class LinksWithIconsPlugin extends Plugin {
         // Debounce: wait 2 seconds of inactivity before writing to disk
         if (this.saveDiskCacheTimer) window.clearTimeout(this.saveDiskCacheTimer);
         this.saveDiskCacheTimer = window.setTimeout(() => {
-            (async () => {
+            void (async () => {
                 try {
                     const adapter = this.app.vault.adapter;
                     await adapter.write(this.diskCachePath, JSON.stringify(this.iconCache));
@@ -1038,7 +1037,10 @@ Write-Output ([ShellIcon]::GetBase64Icon('${escapedPath}', ${psBool}, ${imgListI
             const buffer = Buffer.from(psScript, 'utf16le');
             const encodedCommand = buffer.toString('base64');
 
-            const childProcess = (window as any).require('child_process');
+            const req = (window as unknown as { require: (module: string) => any })['require'];
+            const childProcess = req('child_process') as {
+                exec: (cmd: string, cb: (error: any, stdout: string) => void) => void;
+            };
             childProcess.exec(`powershell -ExecutionPolicy Bypass -EncodedCommand ${encodedCommand}`, (error: any, stdout: string) => {
                 this.activeExtractions--;
                 this.drainExtractionQueue();
