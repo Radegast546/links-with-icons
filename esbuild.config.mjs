@@ -1,6 +1,8 @@
 import esbuild from "esbuild";
 import process from "process";
 import { builtinModules } from "module";
+import fs from "fs";
+import path from "path";
 
 const banner =
 `/*
@@ -10,6 +12,31 @@ if you want to view the source, please visit the github repository of this plugi
 `;
 
 const prod = (process.argv[2] === 'production');
+
+// Target directory in your Obsidian vault
+const vaultPluginDir = "C:\\Users\\musil\\OneDrive\\Moje poznámky\\.obsidian\\plugins\\links-with-icons";
+
+// Esbuild plugin to copy compiled files to the vault
+const copyToVaultPlugin = {
+	name: 'copy-to-vault',
+	setup(build) {
+		build.onEnd(() => {
+			try {
+				if (!fs.existsSync(vaultPluginDir)) {
+					fs.mkdirSync(vaultPluginDir, { recursive: true });
+				}
+				fs.copyFileSync("main.js", path.join(vaultPluginDir, "main.js"));
+				fs.copyFileSync("manifest.json", path.join(vaultPluginDir, "manifest.json"));
+				if (fs.existsSync("styles.css")) {
+					fs.copyFileSync("styles.css", path.join(vaultPluginDir, "styles.css"));
+				}
+				console.log(`\x1b[32mSuccessfully copied build files to: ${vaultPluginDir}\x1b[0m`);
+			} catch (err) {
+				console.error("Failed to copy build files to vault:", err);
+			}
+		});
+	},
+};
 
 const context = await esbuild.context({
 	banner: {
@@ -38,6 +65,7 @@ const context = await esbuild.context({
 	sourcemap: prod ? false : 'inline',
 	treeShaking: true,
 	outfile: 'main.js',
+	plugins: [copyToVaultPlugin],
 });
 
 if (prod) {
