@@ -558,7 +558,7 @@ var _LinksWithIconsPlugin = class extends import_obsidian.Plugin {
     await this.loadDiskCache();
     this.addSettingTab(new LinksWithIconsSettingTab(this.app, this));
     this.registerPdfModalObserver();
-    this.applyPdfClass();
+    this.updatePdfStyle();
     this.registerEditorExtension([
       import_view.ViewPlugin.define((view) => new IconViewPlugin(view, this), {
         decorations: (v) => v.decorations
@@ -716,7 +716,10 @@ var _LinksWithIconsPlugin = class extends import_obsidian.Plugin {
       this.pdfModalObserver.disconnect();
       this.pdfModalObserver = null;
     }
-    activeDocument.body.removeClass("lwi-hide-in-pdf");
+    const existingStyle = activeDocument.getElementById("lwi-pdf-style");
+    if (existingStyle) {
+      existingStyle.remove();
+    }
     void this.flushDiskCache();
   }
   async loadSettings() {
@@ -725,7 +728,7 @@ var _LinksWithIconsPlugin = class extends import_obsidian.Plugin {
   }
   async saveSettings() {
     await this.saveData(this.settings);
-    this.applyPdfClass();
+    this.updatePdfStyle();
     this.app.workspace.updateOptions();
   }
   registerPdfModalObserver() {
@@ -763,11 +766,23 @@ var _LinksWithIconsPlugin = class extends import_obsidian.Plugin {
       modalContent.appendChild(customSection);
     }
   }
-  applyPdfClass() {
+  updatePdfStyle() {
+    const existingStyle = activeDocument.getElementById("lwi-pdf-style");
+    if (existingStyle) {
+      existingStyle.remove();
+    }
     if (this.settings.hideIconsInPdf) {
-      activeDocument.body.addClass("lwi-hide-in-pdf");
-    } else {
-      activeDocument.body.removeClass("lwi-hide-in-pdf");
+      const styleEl = activeDocument.createElement("style");
+      styleEl.id = "lwi-pdf-style";
+      styleEl.textContent = `
+                @media print {
+                    .links-with-icons-osicon,
+                    .links-with-icons-favicon {
+                        display: none !important;
+                    }
+                }
+            `;
+      activeDocument.head.appendChild(styleEl);
     }
   }
   // ── Disk cache helpers ────────────────────────────────────────────────

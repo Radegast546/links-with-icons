@@ -743,7 +743,7 @@ export default class LinksWithIconsPlugin extends Plugin {
         this.addSettingTab(new LinksWithIconsSettingTab(this.app, this));
 
         this.registerPdfModalObserver();
-        this.applyPdfClass();
+        this.updatePdfStyle();
 
         // 1. Register CodeMirror 6 Editor Extension (Live Preview)
         this.registerEditorExtension([
@@ -919,7 +919,10 @@ export default class LinksWithIconsPlugin extends Plugin {
             this.pdfModalObserver.disconnect();
             this.pdfModalObserver = null;
         }
-        activeDocument.body.removeClass('lwi-hide-in-pdf');
+        const existingStyle = activeDocument.getElementById('lwi-pdf-style');
+        if (existingStyle) {
+            existingStyle.remove();
+        }
         void this.flushDiskCache();
     }
 
@@ -930,7 +933,7 @@ export default class LinksWithIconsPlugin extends Plugin {
 
     async saveSettings() {
         await this.saveData(this.settings);
-        this.applyPdfClass();
+        this.updatePdfStyle();
         // Force hot reload of editor options and redraw all decorations instantly
         this.app.workspace.updateOptions();
     }
@@ -980,11 +983,24 @@ export default class LinksWithIconsPlugin extends Plugin {
         }
     }
 
-    applyPdfClass() {
+    updatePdfStyle() {
+        const existingStyle = activeDocument.getElementById('lwi-pdf-style');
+        if (existingStyle) {
+            existingStyle.remove();
+        }
+
         if (this.settings.hideIconsInPdf) {
-            activeDocument.body.addClass('lwi-hide-in-pdf');
-        } else {
-            activeDocument.body.removeClass('lwi-hide-in-pdf');
+            const styleEl = activeDocument.createElement('style');
+            styleEl.id = 'lwi-pdf-style';
+            styleEl.textContent = `
+                @media print {
+                    .links-with-icons-osicon,
+                    .links-with-icons-favicon {
+                        display: none !important;
+                    }
+                }
+            `;
+            activeDocument.head.appendChild(styleEl);
         }
     }
 
