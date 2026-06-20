@@ -51,7 +51,8 @@ var DEFAULT_SETTINGS = {
   enableWebFavicons: true,
   faviconProvider: "google",
   webFallbackIcon: "globe",
-  ignoredDomains: ""
+  ignoredDomains: "",
+  hideIconsInPdf: false
 };
 function getDomain(url) {
   try {
@@ -472,6 +473,10 @@ var LinksWithIconsSettingTab = class extends import_obsidian.PluginSettingTab {
       this.plugin.settings.enableDynamicSizing = value;
       await this.plugin.saveSettings();
     }));
+    new import_obsidian.Setting(containerEl).setName("Export icons to PDF").setDesc("Include local OS icons and web URL favicons when exporting notes to PDF.").addToggle((toggle) => toggle.setValue(!this.plugin.settings.hideIconsInPdf).onChange(async (value) => {
+      this.plugin.settings.hideIconsInPdf = !value;
+      await this.plugin.saveSettings();
+    }));
     new import_obsidian.Setting(containerEl).setName("Local File Icons").setHeading();
     new import_obsidian.Setting(containerEl).setName("Show icons on internal links").setDesc("Display icons for wiki-style links like [[file.xlsx]].").addToggle((toggle) => toggle.setValue(this.plugin.settings.enableInternalLinks).onChange(async (value) => {
       this.plugin.settings.enableInternalLinks = value;
@@ -540,6 +545,7 @@ var _LinksWithIconsPlugin = class extends import_obsidian.Plugin {
     this.saveDiskCacheTimer = null;
     this.activeExtractions = 0;
     this.extractionQueue = [];
+    this.pdfModalObserver = null;
   }
   async onload() {
     console.log("loading Links with Icons plugin");
@@ -551,6 +557,8 @@ var _LinksWithIconsPlugin = class extends import_obsidian.Plugin {
     }
     await this.loadDiskCache();
     this.addSettingTab(new LinksWithIconsSettingTab(this.app, this));
+    this.registerPdfModalObserver();
+    this.applyPdfClass();
     this.registerEditorExtension([
       import_view.ViewPlugin.define((view) => new IconViewPlugin(view, this), {
         decorations: (v) => v.decorations
@@ -704,6 +712,11 @@ var _LinksWithIconsPlugin = class extends import_obsidian.Plugin {
   }
   onunload() {
     console.log("unloading Links with Icons plugin");
+    if (this.pdfModalObserver) {
+      this.pdfModalObserver.disconnect();
+      this.pdfModalObserver = null;
+    }
+    activeDocument.body.removeClass("lwi-hide-in-pdf");
     void this.flushDiskCache();
   }
   async loadSettings() {
@@ -712,7 +725,50 @@ var _LinksWithIconsPlugin = class extends import_obsidian.Plugin {
   }
   async saveSettings() {
     await this.saveData(this.settings);
+    this.applyPdfClass();
     this.app.workspace.updateOptions();
+  }
+  registerPdfModalObserver() {
+    this.pdfModalObserver = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        for (const node of Array.from(mutation.addedNodes)) {
+          if (node instanceof HTMLElement && node.hasClass("modal-container")) {
+            const titleEl = node.querySelector(".modal-title");
+            if (titleEl && titleEl.textContent === "Export to PDF") {
+              this.injectPdfSettings(node);
+            }
+          }
+        }
+      }
+    });
+    this.pdfModalObserver.observe(document.body, { childList: true, subtree: true });
+  }
+  injectPdfSettings(modalEl) {
+    const modalContent = modalEl.querySelector(".modal-content");
+    if (!modalContent)
+      return;
+    const existing = modalContent.querySelector(".lwi-pdf-settings-wrapper");
+    if (existing)
+      existing.remove();
+    const customSection = activeDocument.createElement("div");
+    customSection.addClass("lwi-pdf-settings-wrapper");
+    new import_obsidian.Setting(customSection).setName("Export icons").setDesc("Include local OS icons and web URL favicons in the generated PDF.").addToggle((toggle) => toggle.setValue(!this.settings.hideIconsInPdf).onChange(async (value) => {
+      this.settings.hideIconsInPdf = !value;
+      await this.saveSettings();
+    }));
+    const buttonContainer = modalContent.querySelector(".modal-button-container");
+    if (buttonContainer) {
+      modalContent.insertBefore(customSection, buttonContainer);
+    } else {
+      modalContent.appendChild(customSection);
+    }
+  }
+  applyPdfClass() {
+    if (this.settings.hideIconsInPdf) {
+      activeDocument.body.addClass("lwi-hide-in-pdf");
+    } else {
+      activeDocument.body.removeClass("lwi-hide-in-pdf");
+    }
   }
   // ── Disk cache helpers ────────────────────────────────────────────────
   async loadDiskCache() {

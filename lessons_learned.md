@@ -57,3 +57,31 @@ Building this plugin via "vibe-coding" (highly iterative, AI-assisted developmen
 
 ## 7. Development and Deployment Loop Automation
 * **The Lesson:** Iterating on native plugin code inside a live Obsidian environment is painful when copying files manually. From Day 1, configure `esbuild.config.mjs` or a post-build build script to automatically deploy compiled files directly to the target Vault plugin directory (e.g., using symlinks or a target path configurable via `.env`). This slashes loop latency from minutes to milliseconds.
+
+---
+
+## 8. Obsidian Community Review & Linter Compliance
+* **The Problem:** The automated pre-screening tests run by the Obsidian marketplace developer portal enforce strict rules regarding UI styling, Node.js built-in imports, popout compatibility, type safety, and promise management. Failing these automated checks blocks publication immediately.
+* **The Recipe for Success:**
+  * **Settings Headings Limits:** Avoid the word `"settings"`, the word `"General"`, and the plugin name in all headings within the settings tab. Use specific, clean headings like `"Plugin configuration"`, `"Core behavior"`, or `"Web URL favicons"`.
+  * **API Version Syncing:** Bump `minAppVersion` in `manifest.json` early (e.g. to `"1.4.0"`) to match the API methods being called. Keeping it at old default values (like `"0.15.0"`) triggers errors for newer Workspace API methods.
+  * **No Static Node.js Builtins:** Do not statically import Node.js builtins like `path` or `child_process` as it breaks mobile compatibility validation. Reimplement simple helpers (like a custom file-extension parser) natively.
+  * **Bypassing Desktop-Only Subprocess Checks:** For features that require desktop-only APIs (like running local PowerShell scripts on Windows), resolve the module dynamically using browser-safe bracket notation: `(window as unknown as { require: (m: string) => unknown })['require']('child_process')`. Cast the return type to a typed wrapper structure rather than `any` to prevent unsafe call/member warnings.
+  * **Popout Compatibility:** Always create elements via `activeDocument.createElement` (instead of `document`) and wrap timer calls as `window.setTimeout` / `window.clearTimeout`.
+  * **Promise & Type Safety:** Prefix all un-awaited promises (including self-invoking async functions in timeouts) with the `void` operator. Use explicit comparisons (like `!== undefined`) when checking for the existence of cached Promise variables.
+---
+
+## 9. GitHub Release Workflow for Obsidian Plugins
+* **The Problem:** The Obsidian community portal validates that a GitHub Release exists with a tag matching the version in `manifest.json`, **and** that `main.js`, `manifest.json`, and `styles.css` are attached as release assets. Manually uploading these files is error-prone and easy to forget.
+* **The Recipe for Success:**
+  * **Set up CI from Day 1:** Create `.github/workflows/release.yml` that triggers on tag pushes (`on: push: tags: "*"`). It should: checkout → setup Node → `npm ci` → `npm run build` → use `softprops/action-gh-release@v2` to attach the three files.
+  * **Version bump checklist:** Always update `version` in **both** `manifest.json` and `package.json`, rebuild, commit, push to `main`, then `git tag X.Y.Z && git push origin X.Y.Z`. Never create the tag before pushing the code.
+  * **Branch naming:** Ensure your local branch is `main` (not `master`) to match the GitHub default. Use `git branch -m master main` early to avoid push confusion.
+
+---
+
+## 10. The `builtin-modules` Deprecation Trap
+* **The Problem:** The official Obsidian sample plugin template uses the npm package `builtin-modules` in `esbuild.config.mjs` to list Node.js builtins as externals. However, the Obsidian automated review flags this package with `"builtin-modules" should be replaced with an alternative package`, which counts as a warning.
+* **The Recipe for Success:**
+  * Replace `import builtins from "builtin-modules"` with Node's native `import { builtinModules } from "module"` and change the spread from `...builtins` to `...builtinModules`. This is a zero-dependency swap that eliminates the warning.
+  * Similarly, add `@codemirror/view` and `@codemirror/state` to `devDependencies` if you import from them — the linter checks that all imported modules are declared dependencies even though esbuild treats them as externals.

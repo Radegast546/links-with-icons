@@ -23,3 +23,17 @@
 .links-with-icons-osicon svg {
     stroke-width: 2.2px;
 }
+
+/* Hide icons during print if user chose to disable them */
+body.is-printing.lwi-hide-in-pdf .links-with-icons-osicon,
+body.is-printing.lwi-hide-in-pdf .links-with-icons-favicon {
+    display: none !important;
+}
+
+/* Injected setting styling in native Export to PDF modal */
+.lwi-pdf-settings-wrapper {
+    border-top: 1px solid var(--background-modifier-border);
+    margin-top: 15px;
+    padding-top: 10px;
+}
+

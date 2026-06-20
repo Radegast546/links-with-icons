@@ -25,6 +25,7 @@ interface LinksWithIconsSettings {
     faviconProvider: string;
     webFallbackIcon: string;
     ignoredDomains: string;
+    hideIconsInPdf: boolean;
 }
 
 const DEFAULT_SETTINGS: LinksWithIconsSettings = {
@@ -40,6 +41,7 @@ const DEFAULT_SETTINGS: LinksWithIconsSettings = {
     faviconProvider: 'google',
     webFallbackIcon: 'globe',
     ignoredDomains: '',
+    hideIconsInPdf: false,
 };
 
 // ── Helper Functions ──────────────────────────────────────────────────
@@ -554,6 +556,16 @@ class LinksWithIconsSettingTab extends PluginSettingTab {
                     await this.plugin.saveSettings();
                 }));
 
+        new Setting(containerEl)
+            .setName('Export icons to PDF')
+            .setDesc('Include local OS icons and web URL favicons when exporting notes to PDF.')
+            .addToggle(toggle => toggle
+                .setValue(!this.plugin.settings.hideIconsInPdf)
+                .onChange(async (value) => {
+                    this.plugin.settings.hideIconsInPdf = !value;
+                    await this.plugin.saveSettings();
+                }));
+
         // ── SECTION: LOCAL FILE ICONS ──
         new Setting(containerEl).setName('Local File Icons').setHeading();
 
@@ -713,6 +725,7 @@ export default class LinksWithIconsPlugin extends Plugin {
     private activeExtractions: number = 0;
     private extractionQueue: (() => void)[] = [];
     private static readonly MAX_CONCURRENT_EXTRACTIONS = 5;
+    private pdfModalObserver: MutationObserver | null = null;
 
     async onload() {
         console.log('loading Links with Icons plugin');
@@ -728,6 +741,9 @@ export default class LinksWithIconsPlugin extends Plugin {
         await this.loadDiskCache();
 
         this.addSettingTab(new LinksWithIconsSettingTab(this.app, this));
+
+        this.registerPdfModalObserver();
+        this.applyPdfClass();
 
         // 1. Register CodeMirror 6 Editor Extension (Live Preview)
         this.registerEditorExtension([
@@ -899,6 +915,11 @@ export default class LinksWithIconsPlugin extends Plugin {
 
     onunload() {
         console.log('unloading Links with Icons plugin');
+        if (this.pdfModalObserver) {
+            this.pdfModalObserver.disconnect();
+            this.pdfModalObserver = null;
+        }
+        activeDocument.body.removeClass('lwi-hide-in-pdf');
         void this.flushDiskCache();
     }
 
@@ -909,8 +930,62 @@ export default class LinksWithIconsPlugin extends Plugin {
 
     async saveSettings() {
         await this.saveData(this.settings);
+        this.applyPdfClass();
         // Force hot reload of editor options and redraw all decorations instantly
         this.app.workspace.updateOptions();
+    }
+
+    registerPdfModalObserver() {
+        this.pdfModalObserver = new MutationObserver((mutations) => {
+            for (const mutation of mutations) {
+                for (const node of Array.from(mutation.addedNodes)) {
+                    if (node instanceof HTMLElement && node.hasClass('modal-container')) {
+                        const titleEl = node.querySelector('.modal-title');
+                        if (titleEl && titleEl.textContent === 'Export to PDF') {
+                            this.injectPdfSettings(node);
+                        }
+                    }
+                }
+            }
+        });
+        this.pdfModalObserver.observe(document.body, { childList: true, subtree: true });
+    }
+
+    injectPdfSettings(modalEl: HTMLElement) {
+        const modalContent = modalEl.querySelector('.modal-content');
+        if (!modalContent) return;
+
+        // Clean up any existing injected container to prevent duplicates
+        const existing = modalContent.querySelector('.lwi-pdf-settings-wrapper');
+        if (existing) existing.remove();
+
+        const customSection = activeDocument.createElement('div');
+        customSection.addClass('lwi-pdf-settings-wrapper');
+        
+        new Setting(customSection)
+            .setName('Export icons')
+            .setDesc('Include local OS icons and web URL favicons in the generated PDF.')
+            .addToggle(toggle => toggle
+                .setValue(!this.settings.hideIconsInPdf)
+                .onChange(async (value) => {
+                    this.settings.hideIconsInPdf = !value;
+                    await this.saveSettings();
+                }));
+
+        const buttonContainer = modalContent.querySelector('.modal-button-container');
+        if (buttonContainer) {
+            modalContent.insertBefore(customSection, buttonContainer);
+        } else {
+            modalContent.appendChild(customSection);
+        }
+    }
+
+    applyPdfClass() {
+        if (this.settings.hideIconsInPdf) {
+            activeDocument.body.addClass('lwi-hide-in-pdf');
+        } else {
+            activeDocument.body.removeClass('lwi-hide-in-pdf');
+        }
     }
 
     // ── Disk cache helpers ────────────────────────────────────────────────
