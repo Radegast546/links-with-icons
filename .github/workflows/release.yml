@@ -1,4 +1,4 @@
-name: Release Obsidian Plugin
+name: Release Obsidian plugin
 
 on:
   push:
@@ -6,10 +6,13 @@ on:
       - "*"
 
 jobs:
-  build:
+  release:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
 
     steps:
       - name: Checkout repository
@@ -19,17 +22,35 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: "npm"
+          cache: npm
 
       - name: Install dependencies
         run: npm ci
 
+      - name: Verify release version
+        run: npm run verify-version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+
+      - name: Run quality checks
+        run: npm run check
+
       - name: Build plugin
         run: npm run build
+
+      - name: Attest release assets
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            main.js
+            manifest.json
+            styles.css
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
+          body_path: RELEASE_NOTES.md
+          generate_release_notes: true
           files: |
             main.js
             manifest.json

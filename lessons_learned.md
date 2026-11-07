@@ -30,11 +30,12 @@ Building this plugin via "vibe-coding" (highly iterative, AI-assisted developmen
 
 ---
 
-## 4. Command Line Length Limits (Windows 8191-Character Limit)
-* **The Problem:** To retrieve high-resolution icons (16px to 256px), we upgraded the PowerShell script to interface with the Shell Image List API using complex C# P/Invoke declarations (`SHGetImageList`, `ImageList_GetIcon`). We initially tried to execute this script inline using PowerShell’s `-EncodedCommand` switch. However, the Base64-encoded payload of the expanded C# interop code exceeded the Windows command-line limit of **8,191 characters**, causing the calls to fail silently.
-* **The Recipe for Success:** 
-  * `-EncodedCommand` is excellent for simple, one-liner helper scripts, but quickly breaks under the weight of complex .NET interop or P/Invoke definitions.
-  * Writing to a temporary `.ps1` file and executing it is the most reliable way to run complex scripts from Node in a Windows environment, ensuring we never hit operating system command-length ceilings.
+## 4. Windows Shell and Command-Line Limits
+* **The Problem:** Node’s `exec()` runs through `cmd.exe`, introducing shell quoting rules and the commonly encountered 8,191-character command limit. The Base64-encoded PowerShell/C# icon extractor is already large enough that small changes can approach this limit.
+* **The Recipe for Success:**
+  * Use `execFile()` with an executable and argument array so the command does not pass through `cmd.exe`.
+  * Add a timeout, hide the child window, cap buffered output, and validate the returned data URL before caching it.
+  * Windows process creation still has a larger command-line ceiling. If the extraction script eventually approaches that ceiling, move the stable helper code to a uniquely named temporary script or a reusable helper process.
 
 ---
 
@@ -46,17 +47,17 @@ Building this plugin via "vibe-coding" (highly iterative, AI-assisted developmen
 
 ---
 
-## 6. Node.js `exec` and Path Encoding in Electron
+## 6. Node.js Subprocesses and Path Encoding in Electron
 * **The Problem:** Obsidian runs inside an Electron container. Accessing the local file system and executing shell subprocesses introduces subtle path-encoding bugs, especially if the vault path contains Unicode/non-ASCII characters (e.g., accents, diacritics).
 * **The Recipe for Success:** 
   * Always resolve paths to absolute paths before passing them to OS shells.
-  * Leverage Node's environment variables (`process.env.TEMP`) to find safe, ASCII-only directories for execution.
+  * Pass arguments through `execFile()` and encode PowerShell source as UTF-16LE to preserve Unicode paths without shell quoting.
   * Implement cross-platform safety checks (`Platform.isWin` / `Platform.isMacOS`) to fall back gracefully on devices that cannot execute desktop shell scripts (e.g., iOS or Android).
 
 ---
 
 ## 7. Development and Deployment Loop Automation
-* **The Lesson:** Iterating on native plugin code inside a live Obsidian environment is painful when copying files manually. From Day 1, configure `esbuild.config.mjs` or a post-build build script to automatically deploy compiled files directly to the target Vault plugin directory (e.g., using symlinks or a target path configurable via `.env`). This slashes loop latency from minutes to milliseconds.
+* **The Lesson:** Keep a normal production build portable and side-effect free. Put vault deployment behind a separate command, require an explicit target such as `OBSIDIAN_PLUGIN_DIR`, and never commit a developer’s personal vault path.
 
 ---
 
@@ -67,15 +68,16 @@ Building this plugin via "vibe-coding" (highly iterative, AI-assisted developmen
   * **API Version Syncing:** Bump `minAppVersion` in `manifest.json` early (e.g. to `"1.4.0"`) to match the API methods being called. Keeping it at old default values (like `"0.15.0"`) triggers errors for newer Workspace API methods.
   * **No Static Node.js Builtins:** Do not statically import Node.js builtins like `path` or `child_process` as it breaks mobile compatibility validation. Reimplement simple helpers (like a custom file-extension parser) natively.
   * **Bypassing Desktop-Only Subprocess Checks:** For features that require desktop-only APIs (like running local PowerShell scripts on Windows), resolve the module dynamically using browser-safe bracket notation: `(window as unknown as { require: (m: string) => unknown })['require']('child_process')`. Cast the return type to a typed wrapper structure rather than `any` to prevent unsafe call/member warnings.
-  * **Popout Compatibility:** Always create elements via `activeDocument.createElement` (instead of `document`) and wrap timer calls as `window.setTimeout` / `window.clearTimeout`.
+  * **Popout Compatibility:** Create detached elements through the `ownerDocument` of the editor or rendered link that will receive them, and wrap timer calls as `window.setTimeout` / `window.clearTimeout`.
   * **Promise & Type Safety:** Prefix all un-awaited promises (including self-invoking async functions in timeouts) with the `void` operator. Use explicit comparisons (like `!== undefined`) when checking for the existence of cached Promise variables.
 ---
 
 ## 9. GitHub Release Workflow for Obsidian Plugins
 * **The Problem:** The Obsidian community portal validates that a GitHub Release exists with a tag matching the version in `manifest.json`, **and** that `main.js`, `manifest.json`, and `styles.css` are attached as release assets. Manually uploading these files is error-prone and easy to forget.
 * **The Recipe for Success:**
-  * **Set up CI from Day 1:** Create `.github/workflows/release.yml` that triggers on tag pushes (`on: push: tags: "*"`). It should: checkout → setup Node → `npm ci` → `npm run build` → use `softprops/action-gh-release@v2` to attach the three files.
-  * **Version bump checklist:** Always update `version` in **both** `manifest.json` and `package.json`, rebuild, commit, push to `main`, then `git tag X.Y.Z && git push origin X.Y.Z`. Never create the tag before pushing the code.
+  * **Set up CI from Day 1:** Run typechecking, linting, unit tests, and builds on pull requests and main-branch pushes. The tag workflow should repeat those checks before publishing.
+  * **Describe and attest releases:** Generate GitHub release notes and create build-provenance attestations for `main.js`, `manifest.json`, and `styles.css` before uploading them.
+  * **Version bump checklist:** Synchronize `manifest.json`, `package.json`, `package-lock.json`, and `versions.json`, rebuild, commit, push to `main`, then tag and push the exact version. Never create the tag before pushing the code.
   * **Branch naming:** Ensure your local branch is `main` (not `master`) to match the GitHub default. Use `git branch -m master main` early to avoid push confusion.
 
 ---
@@ -85,3 +87,12 @@ Building this plugin via "vibe-coding" (highly iterative, AI-assisted developmen
 * **The Recipe for Success:**
   * Replace `import builtins from "builtin-modules"` with Node's native `import { builtinModules } from "module"` and change the spread from `...builtins` to `...builtinModules`. This is a zero-dependency swap that eliminates the warning.
   * Similarly, add `@codemirror/view` and `@codemirror/state` to `devDependencies` if you import from them — the linter checks that all imported modules are declared dependencies even though esbuild treats them as externals.
+
+---
+
+## 11. Parse Markdown Structurally and Test the Edge Cases
+* **The Problem:** Regular expressions for Markdown links eventually decorate embeds and code, include optional link titles in destinations, and fail on nested parentheses.
+* **The Recipe for Success:**
+  * Use CodeMirror’s Markdown syntax tree for standard links and use syntax context to filter the remaining wiki-link scan.
+  * Resolve every vault-relative target against the source note, never the currently focused workspace file.
+  * Keep parsing and URL helpers in pure modules with automated regression tests. Run a Windows smoke test against the production PowerShell template in CI.

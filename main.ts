@@ -1,325 +1,200 @@
-import { Plugin, FileSystemAdapter, App, PluginSettingTab, Setting, Notice, setIcon, Platform } from 'obsidian';
+import {
+    Plugin,
+    FileSystemAdapter,
+    App,
+    PluginSettingTab,
+    Setting,
+    Notice,
+    setIcon,
+    Platform,
+    editorInfoField,
+    MarkdownView,
+    parseLinktext,
+} from 'obsidian';
 import { ViewUpdate, PluginValue, EditorView, ViewPlugin, DecorationSet, Decoration, WidgetType } from '@codemirror/view';
-import { RangeSetBuilder } from '@codemirror/state';
-
-function getExtension(filePath: string): string {
-    const lastDot = filePath.lastIndexOf('.');
-    if (lastDot === -1) return '';
-    const lastSlash = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'));
-    if (lastSlash > lastDot) return '';
-    return filePath.slice(lastDot);
-}
+import { RangeSetBuilder, type EditorState } from '@codemirror/state';
+import { parser as markdownParser } from '@lezer/markdown';
+import { TreeFragment, type Tree, type ChangedRange } from '@lezer/common';
+import { collectMarkdownLinks, type TextRange } from './src/markdown-links';
+import { loadValidatedSettings, type LinksWithIconsSettings } from './src/settings';
+import {
+    fileUriToWindowsPath,
+    getDomain,
+    getExtension,
+    getFaviconUrl,
+    getLucideIconForExtension,
+    getLocalIconTarget,
+    isAbsoluteLocalPath,
+    isHttpUrl,
+    isIgnoredDomain,
+    normalizeMarkdownDestination,
+    localPathToFileUri,
+} from './src/link-utils';
 
 // ── Settings ──────────────────────────────────────────────────────────
 
-interface LinksWithIconsSettings {
-    iconSize: number;
-    enableInternalLinks: boolean;
-    enableExternalLinks: boolean;
-    enableFolderIcons: boolean;
-    folderIconStyle: string;
-    blacklistedExtensions: string;
-    enableDiskCache: boolean;
-    enableDynamicSizing: boolean;
-    enableWebFavicons: boolean;
-    faviconProvider: string;
-    webFallbackIcon: string;
-    ignoredDomains: string;
-    hideIconsInPdf: boolean;
-}
-
-const DEFAULT_SETTINGS: LinksWithIconsSettings = {
-    iconSize: 16,
-    enableInternalLinks: true,
-    enableExternalLinks: true,
-    enableFolderIcons: true,
-    folderIconStyle: 'native',
-    blacklistedExtensions: '',
-    enableDiskCache: true,
-    enableDynamicSizing: true,
-    enableWebFavicons: true,
-    faviconProvider: 'google',
-    webFallbackIcon: 'globe',
-    ignoredDomains: '',
-    hideIconsInPdf: false,
-};
-
-// ── Helper Functions ──────────────────────────────────────────────────
-
-function getDomain(url: string): string {
-    try {
-        const parsed = new URL(url);
-        return parsed.hostname;
-    } catch {
-        const match = url.match(/^(?:https?:\/\/)?(?:www\.)?([^/?#]+)/i);
-        return match ? match[1] : '';
-    }
-}
-
-function isIgnoredDomain(domain: string, ignoredStr: string): boolean {
-    if (!ignoredStr) return false;
-    const ignoredList = ignoredStr.split(',').map(d => d.trim().toLowerCase()).filter(d => d.length > 0);
-    const lowerDomain = domain.toLowerCase();
-    return ignoredList.some(ignored => lowerDomain === ignored || lowerDomain.endsWith('.' + ignored));
-}
-
-function getFaviconUrl(provider: string, domain: string, size: number): string {
-    switch (provider) {
-        case 'google':
-            return `https://www.google.com/s2/favicons?domain=${domain}&sz=${size}&default_icon=404`;
-        case 'duckduckgo':
-            return `https://icons.duckduckgo.com/ip3/${domain}.ico`;
-        case 'iconhorse':
-            return `https://icon.horse/icon/${domain}?size=${size}`;
-        case 'direct':
-            return `https://${domain}/favicon.ico`;
-        default:
-            return `https://www.google.com/s2/favicons?domain=${domain}&sz=${size}`;
-    }
-}
-
-function getLucideIconForExtension(ext: string, isFolder: boolean): string {
-    if (isFolder) return 'folder';
-    switch (ext) {
-        // Documents
-        case '.md': return 'file-edit';
-        case '.txt': return 'file-text';
-        case '.pdf': return 'file-text';
-        case '.doc':
-        case '.docx': return 'file-text';
-        
-        // Spreadsheets
-        case '.xls':
-        case '.xlsx':
-        case '.csv': return 'sheet';
-        
-        // Presentations
-        case '.ppt':
-        case '.pptx': return 'presentation';
-        
-        // Audio
-        case '.mp3':
-        case '.wav':
-        case '.m4a':
-        case '.ogg': return 'music';
-        
-        // Video
-        case '.mp4':
-        case '.mkv':
-        case '.avi':
-        case '.mov': return 'video';
-        
-        // Images
-        case '.png':
-        case '.jpg':
-        case '.jpeg':
-        case '.gif':
-        case '.svg':
-        case '.webp': return 'image';
-        
-        // Archives
-        case '.zip':
-        case '.rar':
-        case '.7z':
-        case '.tar':
-        case '.gz': return 'archive';
-        
-        // Code
-        case '.js':
-        case '.ts':
-        case '.json':
-        case '.html':
-        case '.css':
-        case '.py':
-        case '.cpp':
-        case '.c':
-        case '.rs':
-        case '.go': return 'file-code';
-        
-        default: return 'file';
-    }
-}
-
 // ── CodeMirror Widgets ────────────────────────────────────────────────
+
+const HEADING_SCALES = [1, 2, 1.7, 1.4, 1.2, 1.1, 1];
+
+function getIconSizeEm(settings: LinksWithIconsSettings, headingLevel: number): number {
+    const baseSize = settings.iconSize / 16;
+    if (settings.enableDynamicSizing || headingLevel === 0) return baseSize;
+    return baseSize / (HEADING_SCALES[headingLevel] ?? 1);
+}
+
+function makeWidgetAccessible(element: HTMLElement, label: string, activate: () => void): void {
+    element.setAttribute('role', 'link');
+    element.setAttribute('aria-label', label);
+    element.tabIndex = 0;
+    element.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        activate();
+    });
+    element.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        event.stopPropagation();
+        activate();
+    });
+}
 
 class IconWidget extends WidgetType {
     constructor(
-        public queryPath: string, 
-        public useAttributes: boolean, 
-        public view: EditorView,
-        public plugin: LinksWithIconsPlugin,
-        public headingLevel: number,
-        public originalLink: string
+        private readonly queryPath: string,
+        private readonly useAttributes: boolean,
+        private readonly view: EditorView,
+        private readonly plugin: LinksWithIconsPlugin,
+        private readonly headingLevel: number,
+        private readonly originalLink: string,
+        private readonly sourcePath: string,
+        private readonly settingsRevision: number,
     ) {
         super();
     }
 
-    eq(other: IconWidget) {
-        return other.queryPath === this.queryPath && 
-               other.useAttributes === this.useAttributes && 
-               other.plugin.settings.iconSize === this.plugin.settings.iconSize &&
-               other.headingLevel === this.headingLevel &&
-               other.originalLink === this.originalLink &&
-               other.plugin.settings.enableDynamicSizing === this.plugin.settings.enableDynamicSizing;
+    eq(other: IconWidget): boolean {
+        return other.queryPath === this.queryPath
+            && other.useAttributes === this.useAttributes
+            && other.headingLevel === this.headingLevel
+            && other.originalLink === this.originalLink
+            && other.sourcePath === this.sourcePath
+            && other.settingsRevision === this.settingsRevision;
     }
 
-    toDOM() {
-        const scales = [1.0, 2.0, 1.7, 1.4, 1.2, 1.1, 1.0];
-        const baseSize = this.plugin.settings.iconSize;
-        let emSize = baseSize / 16;
-
-        if (this.plugin.settings.enableDynamicSizing) {
-            // em stays at base ratio; heading CSS naturally scales it
-        } else {
-            if (this.headingLevel > 0) {
-                emSize = (baseSize / 16) / scales[this.headingLevel];
-            }
-        }
-
-        const sizeStr = emSize + 'em';
-        const span = activeDocument.createElement('span');
+    toDOM(): HTMLElement {
+        const ownerDocument = this.view.dom.ownerDocument;
+        const span = ownerDocument.createElement('span');
+        const size = `${getIconSizeEm(this.plugin.settings, this.headingLevel)}em`;
         span.addClass('links-with-icons-osicon');
-        span.style.width = sizeStr;
-        span.style.height = sizeStr;
+        span.toggleClass('links-with-icons-hide-in-pdf', this.plugin.settings.hideIconsInPdf);
+        span.style.width = size;
+        span.style.height = size;
 
         const ext = this.useAttributes ? this.queryPath : getExtension(this.queryPath).toLowerCase();
         const isFolder = !ext && !this.useAttributes;
-        const cacheKey = this.queryPath + (this.useAttributes ? "_attr" : "_real");
+        const cacheKey = this.plugin.getIconCacheKey(this.queryPath, this.useAttributes);
+        const cachedIcon = this.plugin.iconCache[cacheKey];
 
         if (isFolder && this.plugin.settings.folderIconStyle !== 'native') {
-            const iconId = this.plugin.settings.folderIconStyle;
-            setIcon(span, iconId);
-        } else if (this.plugin.iconCache[cacheKey]) {
-            const img = activeDocument.createElement('img');
-            img.src = this.plugin.iconCache[cacheKey];
+            setIcon(span, this.plugin.settings.folderIconStyle);
+        } else if (cachedIcon) {
+            const img = ownerDocument.createElement('img');
+            img.src = cachedIcon;
             span.appendChild(img);
         } else if (!Platform.isWin) {
-            const iconId = getLucideIconForExtension(ext, isFolder);
-            setIcon(span, iconId);
+            setIcon(span, getLucideIconForExtension(ext, isFolder));
         } else {
+            // A usable icon is visible immediately, even while native extraction is pending.
+            setIcon(span, getLucideIconForExtension(ext, isFolder));
             void this.plugin.getIconForFile(this.queryPath, this.useAttributes).then((iconData) => {
+                if (this.settingsRevision !== this.plugin.settingsRevision) return;
                 if (iconData && span.isConnected) {
-                    const img = activeDocument.createElement('img');
+                    const img = ownerDocument.createElement('img');
                     img.src = iconData;
                     span.empty();
                     span.appendChild(img);
-                } else if (iconData) {
-                    this.view.dispatch({
-                        annotations: []
-                    });
                 } else if (span.isConnected) {
-                    const iconId = getLucideIconForExtension(ext, isFolder);
                     span.empty();
-                    setIcon(span, iconId);
+                    setIcon(span, getLucideIconForExtension(ext, isFolder));
                 }
             });
         }
 
-        span.addEventListener('click', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            const activeFile = this.plugin.app.workspace.getActiveFile();
-            const sourcePath = activeFile ? activeFile.path : '';
-            if (this.queryPath.match(/^[a-zA-Z]:\\/) || this.queryPath.startsWith('file:///')) {
-                let target = this.queryPath;
-                if (!target.startsWith('file:///')) {
-                    target = 'file:///' + target.replace(/\\/g, '/');
-                }
-                window.open(target);
+        makeWidgetAccessible(span, `Open ${this.originalLink}`, () => {
+            if (isAbsoluteLocalPath(this.originalLink)) {
+                ownerDocument.defaultView?.open(localPathToFileUri(this.originalLink), '_blank', 'noopener');
             } else {
-                void this.plugin.app.workspace.openLinkText(this.originalLink, sourcePath);
+                void this.plugin.app.workspace.openLinkText(this.originalLink, this.sourcePath);
             }
         });
-
         return span;
     }
 }
 
 class FaviconWidget extends WidgetType {
     constructor(
-        public url: string,
-        public domain: string,
-        public plugin: LinksWithIconsPlugin,
-        public headingLevel: number
+        private readonly url: string,
+        private readonly domain: string,
+        private readonly view: EditorView,
+        private readonly plugin: LinksWithIconsPlugin,
+        private readonly headingLevel: number,
+        private readonly settingsRevision: number,
     ) {
         super();
     }
 
-    eq(other: FaviconWidget) {
-        return other.url === this.url &&
-               other.domain === this.domain &&
-               other.plugin.settings.iconSize === this.plugin.settings.iconSize &&
-               other.headingLevel === this.headingLevel &&
-               other.plugin.settings.enableDynamicSizing === this.plugin.settings.enableDynamicSizing &&
-               other.plugin.settings.faviconProvider === this.plugin.settings.faviconProvider;
+    eq(other: FaviconWidget): boolean {
+        return other.url === this.url
+            && other.domain === this.domain
+            && other.headingLevel === this.headingLevel
+            && other.settingsRevision === this.settingsRevision;
     }
 
-    toDOM() {
-        const scales = [1.0, 2.0, 1.7, 1.4, 1.2, 1.1, 1.0];
-        const baseSize = this.plugin.settings.iconSize;
-        let emSize = baseSize / 16;
-
-        if (this.plugin.settings.enableDynamicSizing) {
-            // em stays at base ratio; heading CSS naturally scales it
-        } else {
-            if (this.headingLevel > 0) {
-                emSize = (baseSize / 16) / scales[this.headingLevel];
-            }
-        }
-
-        const sizeStr = emSize + 'em';
-        const span = activeDocument.createElement('span');
+    toDOM(): HTMLElement {
+        const ownerDocument = this.view.dom.ownerDocument;
+        const span = ownerDocument.createElement('span');
+        const size = `${getIconSizeEm(this.plugin.settings, this.headingLevel)}em`;
         span.addClass('links-with-icons-favicon');
-        span.style.width = sizeStr;
-        span.style.height = sizeStr;
+        span.toggleClass('links-with-icons-hide-in-pdf', this.plugin.settings.hideIconsInPdf);
+        span.style.width = size;
+        span.style.height = size;
 
-        const img = activeDocument.createElement('img');
+        const img = ownerDocument.createElement('img');
         img.src = getFaviconUrl(this.plugin.settings.faviconProvider, this.domain, 64);
-        img.onload = () => {
-            if (this.plugin.settings.faviconProvider === 'google' && img.naturalWidth === 16 && img.naturalHeight === 16) {
-                img.remove();
-                setIcon(span, this.plugin.settings.webFallbackIcon);
-            }
-        };
+        img.alt = '';
+        img.referrerPolicy = 'no-referrer';
         img.onerror = () => {
             img.remove();
             setIcon(span, this.plugin.settings.webFallbackIcon);
         };
         span.appendChild(img);
 
-        span.addEventListener('click', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            window.open(this.url);
+        makeWidgetAccessible(span, `Open ${this.domain}`, () => {
+            ownerDocument.defaultView?.open(this.url, '_blank', 'noopener');
         });
-
         return span;
     }
 }
 
 // ── Path resolution ───────────────────────────────────────────────────
 
-function resolveAbsolutePath(app: App, linkText: string): string | null {
-    if (linkText.startsWith('file:///')) {
-        let decoded = decodeURIComponent(linkText.substring(8));
-        if (decoded.match(/^\/[a-zA-Z]:\//)) {
-            decoded = decoded.substring(1);
-        }
-        return decoded;
-    }
-    if (linkText.match(/^[a-zA-Z]:\\/)) {
-        return linkText;
-    }
+function resolveAbsolutePath(app: App, linkText: string, sourcePath: string): string | null {
+    const parsedLink = parseLinktext(linkText).path || linkText;
+    const fileUriPath = fileUriToWindowsPath(parsedLink);
+    if (fileUriPath) return fileUriPath;
+    if (/^[a-zA-Z]:[\\/]/.test(parsedLink) || /^\\\\[^\\]/.test(parsedLink)) return parsedLink;
 
-    const activeFile = app.workspace.getActiveFile();
-    const sourcePath = activeFile ? activeFile.path : '';
-    const tfile = app.metadataCache.getFirstLinkpathDest(linkText, sourcePath);
+    const tfile = app.metadataCache.getFirstLinkpathDest(parsedLink, sourcePath);
     
     if (tfile) {
         const adapter = app.vault.adapter;
         if (adapter instanceof FileSystemAdapter) {
             return adapter.getFullPath(tfile.path);
         }
+        // Mobile adapters have no native absolute path, but still resolve vault attachments.
+        return tfile.path;
     }
     return null;
 }
@@ -337,11 +212,24 @@ interface DecorationItem {
     domain?: string;
 }
 
-function buildDecorations(view: EditorView, plugin: LinksWithIconsPlugin): DecorationSet {
+function getEditorSourcePath(state: EditorState): string {
+    return state.field(editorInfoField, false)?.file?.path ?? '';
+}
+
+function getVisibleLineRanges(view: EditorView): TextRange[] {
+    return view.visibleRanges.map(({ from, to }) => {
+        const startLine = view.state.doc.lineAt(from);
+        const endPosition = Math.max(from, Math.min(to, view.state.doc.length));
+        const endLine = view.state.doc.lineAt(endPosition);
+        return { from: startLine.from, to: endLine.to };
+    });
+}
+
+function buildDecorations(view: EditorView, plugin: LinksWithIconsPlugin, tree: Tree): DecorationSet {
     const builder = new RangeSetBuilder<Decoration>();
     const decos: DecorationItem[] = [];
     const blacklist = plugin.getBlacklistedSet();
-    const app = plugin.app;
+    const sourcePath = getEditorSourcePath(view.state);
     
     // Find all lines containing the active selection/cursor
     const selection = view.state.selection;
@@ -354,118 +242,63 @@ function buildDecorations(view: EditorView, plugin: LinksWithIconsPlugin): Decor
         }
     }
 
-    for (let { from, to } of view.visibleRanges) {
-        const text = view.state.doc.sliceString(from, to);
-        
-        // Regex 1: [[link]] or [[link|alias]]
-        if (plugin.settings.enableInternalLinks) {
-            const regex1 = /\[\[([^\]|]+)(?:\|[^\]]*)?]\]/g;
-            let match;
-            while ((match = regex1.exec(text)) !== null) {
-                const linkText = match[1].trim();
-                const start = from + match.index;
-                const ext = getExtension(linkText).toLowerCase();
+    const documentText = view.state.doc.toString();
+    const links = collectMarkdownLinks(documentText, tree, getVisibleLineRanges(view));
+    for (const link of links) {
+        if (link.kind === 'wiki' && !plugin.settings.enableInternalLinks) continue;
+        const linkText = link.kind === 'markdown' ? normalizeMarkdownDestination(link.target) : link.target;
+        const line = view.state.doc.lineAt(link.from);
+        if (activeLines.has(line.number)) continue;
 
-                if (ext === '.md') continue;
-                if (ext && blacklist.has(ext)) continue;
+        const headingMatch = line.text.match(/^\s{0,3}(#{1,6})(?:\s|$)/);
+        const headingLevel = headingMatch?.[1]?.length ?? 0;
 
-                const line = view.state.doc.lineAt(start);
-                if (activeLines.has(line.number)) continue; // Hide icons on currently edited lines
-
-                const headingMatch = line.text.match(/^(#{1,6})\s/);
-                const headingLevel = headingMatch ? headingMatch[1].length : 0;
-
-                const absPath = resolveAbsolutePath(app, linkText);
-                if (absPath) {
-                    const resolvedExt = getExtension(absPath).toLowerCase();
-                    if (resolvedExt === '.md') continue;
-                    if (resolvedExt && blacklist.has(resolvedExt)) continue;
-                    if (!resolvedExt && !plugin.settings.enableFolderIcons) continue;
-                    decos.push({
-                        from: start,
-                        to: start,
-                        type: 'osicon',
-                        queryPath: absPath,
-                        useAttributes: false,
-                        headingLevel,
-                        originalLink: linkText
-                    });
-                } else if (ext) {
-                    decos.push({
-                        from: start,
-                        to: start,
-                        type: 'osicon',
-                        queryPath: ext,
-                        useAttributes: true,
-                        headingLevel,
-                        originalLink: linkText
-                    });
-                }
-            }
+        if (isHttpUrl(linkText)) {
+            if (!plugin.settings.enableWebFavicons) continue;
+            const domain = getDomain(linkText);
+            if (!domain || isIgnoredDomain(domain, plugin.settings.ignoredDomains)) continue;
+            decos.push({
+                from: link.from,
+                to: link.from,
+                type: 'favicon',
+                queryPath: linkText,
+                domain,
+                headingLevel,
+            });
+            continue;
         }
 
-        // Regex 2: [label](url)
-        if (plugin.settings.enableExternalLinks || plugin.settings.enableWebFavicons) {
-            const regex2 = /\[[^\]]*\]\(((?:[^()]|\([^()]*\))*)\)/g;
-            let match;
-            while ((match = regex2.exec(text)) !== null) {
-                const linkText = match[1].trim();
-                const start = from + match.index;
+        if (link.kind === 'markdown' && !plugin.settings.enableExternalLinks) continue;
+        const linkPath = parseLinktext(linkText).path || linkText;
+        const ext = getExtension(linkPath).toLowerCase();
+        if (ext === '.md' || (ext && blacklist.has(ext))) continue;
 
-                const line = view.state.doc.lineAt(start);
-                if (activeLines.has(line.number)) continue; // Hide icons on currently edited lines
-
-                const headingMatch = line.text.match(/^(#{1,6})\s/);
-                const headingLevel = headingMatch ? headingMatch[1].length : 0;
-
-                if (linkText.startsWith('http://') || linkText.startsWith('https://')) {
-                    if (!plugin.settings.enableWebFavicons) continue;
-                    const domain = getDomain(linkText);
-                    if (!domain || isIgnoredDomain(domain, plugin.settings.ignoredDomains)) continue;
-                    decos.push({
-                        from: start,
-                        to: start,
-                        type: 'favicon',
-                        queryPath: linkText,
-                        domain,
-                        headingLevel
-                    });
-                    continue;
-                }
-
-                // Local external file links
-                if (!plugin.settings.enableExternalLinks) continue;
-                const ext = getExtension(linkText).toLowerCase();
-                if (ext === '.md') continue;
-                if (ext && blacklist.has(ext)) continue;
-
-                const absPath = resolveAbsolutePath(app, linkText);
-                if (absPath) {
-                    const resolvedExt = getExtension(absPath).toLowerCase();
-                    if (resolvedExt === '.md') continue;
-                    if (resolvedExt && blacklist.has(resolvedExt)) continue;
-                    if (!resolvedExt && !plugin.settings.enableFolderIcons) continue;
-                    decos.push({
-                        from: start,
-                        to: start,
-                        type: 'osicon',
-                        queryPath: absPath,
-                        useAttributes: false,
-                        headingLevel,
-                        originalLink: linkText
-                    });
-                } else if (ext) {
-                    decos.push({
-                        from: start,
-                        to: start,
-                        type: 'osicon',
-                        queryPath: ext,
-                        useAttributes: true,
-                        headingLevel,
-                        originalLink: linkText
-                    });
-                }
-            }
+        const absPath = resolveAbsolutePath(plugin.app, linkPath, sourcePath);
+        const iconTarget = getLocalIconTarget(linkPath, absPath);
+        if (!iconTarget) continue;
+        if (absPath) {
+            const resolvedExt = getExtension(absPath).toLowerCase();
+            if (resolvedExt === '.md' || (resolvedExt && blacklist.has(resolvedExt))) continue;
+            if (!resolvedExt && !plugin.settings.enableFolderIcons) continue;
+            decos.push({
+                from: link.from,
+                to: link.from,
+                type: 'osicon',
+                queryPath: absPath,
+                useAttributes: false,
+                headingLevel,
+                originalLink: linkText,
+            });
+        } else {
+            decos.push({
+                from: link.from,
+                to: link.from,
+                type: 'osicon',
+                queryPath: iconTarget.queryPath,
+                useAttributes: iconTarget.useAttributes,
+                headingLevel,
+                originalLink: linkText,
+            });
         }
     }
 
@@ -480,7 +313,9 @@ function buildDecorations(view: EditorView, plugin: LinksWithIconsPlugin): Decor
                     view, 
                     plugin, 
                     deco.headingLevel,
-                    deco.originalLink || ''
+                    deco.originalLink || '',
+                    sourcePath,
+                    plugin.settingsRevision,
                 ),
                 side: 1
             }));
@@ -489,8 +324,10 @@ function buildDecorations(view: EditorView, plugin: LinksWithIconsPlugin): Decor
                 widget: new FaviconWidget(
                     deco.queryPath,
                     deco.domain || '',
+                    view,
                     plugin,
-                    deco.headingLevel
+                    deco.headingLevel,
+                    plugin.settingsRevision,
                 ),
                 side: 1
             }));
@@ -504,15 +341,36 @@ function buildDecorations(view: EditorView, plugin: LinksWithIconsPlugin): Decor
 
 class IconViewPlugin implements PluginValue {
     decorations: DecorationSet;
+    private tree: Tree;
+    private revision: number;
+    private readonly refresh: () => void;
 
     constructor(view: EditorView, private plugin: LinksWithIconsPlugin) {
-        this.decorations = buildDecorations(view, plugin);
+        // Obsidian's editor token tree does not guarantee CommonMark Link/URL nodes.
+        // Own the parser used by collection instead of depending on host node names.
+        this.tree = markdownParser.parse(view.state.doc.toString());
+        this.revision = plugin.settingsRevision;
+        this.decorations = buildDecorations(view, plugin, this.tree);
+        this.refresh = () => view.dispatch({});
+        plugin.editorRefreshCallbacks.add(this.refresh);
     }
 
     update(update: ViewUpdate) {
-        if (update.docChanged || update.viewportChanged || update.selectionSet) {
-            this.decorations = buildDecorations(update.view, this.plugin);
+        if (update.docChanged) {
+            const changes: ChangedRange[] = [];
+            update.changes.iterChangedRanges((fromA, toA, fromB, toB) => changes.push({ fromA, toA, fromB, toB }));
+            const fragments = TreeFragment.applyChanges(TreeFragment.addTree(this.tree), changes);
+            this.tree = markdownParser.parse(update.state.doc.toString(), fragments);
         }
+        if (update.docChanged || update.viewportChanged || update.selectionSet
+            || this.revision !== this.plugin.settingsRevision || update.startState !== update.state) {
+            this.revision = this.plugin.settingsRevision;
+            this.decorations = buildDecorations(update.view, this.plugin, this.tree);
+        }
+    }
+
+    destroy(): void {
+        this.plugin.editorRefreshCallbacks.delete(this.refresh);
     }
 }
 
@@ -540,7 +398,6 @@ class LinksWithIconsSettingTab extends PluginSettingTab {
             .addSlider(slider => slider
                 .setLimits(8, 64, 2)
                 .setValue(this.plugin.settings.iconSize)
-                .setDynamicTooltip()
                 .onChange(async (value) => {
                     this.plugin.settings.iconSize = value;
                     await this.plugin.saveSettings();
@@ -567,7 +424,7 @@ class LinksWithIconsSettingTab extends PluginSettingTab {
                 }));
 
         // ── SECTION: LOCAL FILE ICONS ──
-        new Setting(containerEl).setName('Local File Icons').setHeading();
+        new Setting(containerEl).setName('Local file icons').setHeading();
 
         new Setting(containerEl)
             .setName('Show icons on internal links')
@@ -581,7 +438,7 @@ class LinksWithIconsSettingTab extends PluginSettingTab {
 
         new Setting(containerEl)
             .setName('Show icons on external local links')
-            .setDesc('Display icons for markdown-style local file links like [name](path).')
+            .setDesc('Display icons for Markdown-style local file links like [name](path).')
             .addToggle(toggle => toggle
                 .setValue(this.plugin.settings.enableExternalLinks)
                 .onChange(async (value) => {
@@ -603,12 +460,12 @@ class LinksWithIconsSettingTab extends PluginSettingTab {
             .setName('Folder icon appearance')
             .setDesc('Choose the icon style used for folders. Selecting a Lucide style overrides the native OS explorer folder icon.')
             .addDropdown(dropdown => dropdown
-                .addOption('native', 'Native OS Icon')
-                .addOption('folder', 'Lucide Folder')
-                .addOption('folder-open', 'Lucide Folder Open')
-                .addOption('folder-closed', 'Lucide Folder Closed')
-                .addOption('folder-archive', 'Lucide Folder Archive')
-                .addOption('book', 'Lucide Notebook')
+                .addOption('native', 'Native OS icon')
+                .addOption('folder', 'Lucide folder')
+                .addOption('folder-open', 'Lucide folder open')
+                .addOption('folder-closed', 'Lucide folder closed')
+                .addOption('folder-archive', 'Lucide folder archive')
+                .addOption('book', 'Lucide notebook')
                 .setValue(this.plugin.settings.folderIconStyle)
                 .onChange(async (value) => {
                     this.plugin.settings.folderIconStyle = value;
@@ -617,9 +474,9 @@ class LinksWithIconsSettingTab extends PluginSettingTab {
 
         new Setting(containerEl)
             .setName('Blacklisted extensions')
-            .setDesc('Comma-separated list of extensions to ignore (e.g. md, txt, canvas).')
+            .setDesc('Comma-separated list of file extensions to ignore.')
             .addText(text => text
-                .setPlaceholder('md, txt, canvas')
+                .setPlaceholder('Extensions separated by commas')
                 .setValue(this.plugin.settings.blacklistedExtensions)
                 .onChange(async (value) => {
                     this.plugin.settings.blacklistedExtensions = value;
@@ -627,11 +484,11 @@ class LinksWithIconsSettingTab extends PluginSettingTab {
                 }));
 
         // ── SECTION: WEB FAVICONS ──
-        new Setting(containerEl).setName('Web URL Favicons').setHeading();
+        new Setting(containerEl).setName('Web URL favicons').setHeading();
 
         new Setting(containerEl)
             .setName('Enable web favicons')
-            .setDesc('Show favicons next to external HTTP/HTTPS web links.')
+            .setDesc('Show favicons next to external web links.')
             .addToggle(toggle => toggle
                 .setValue(this.plugin.settings.enableWebFavicons)
                 .onChange(async (value) => {
@@ -641,7 +498,7 @@ class LinksWithIconsSettingTab extends PluginSettingTab {
 
         new Setting(containerEl)
             .setName('Favicon provider')
-            .setDesc('API service to use for fetching web URL favicons.')
+            .setDesc('Service used to fetch web URL favicons.')
             .addDropdown(dropdown => dropdown
                 .addOption('google', 'Google')
                 .addOption('duckduckgo', 'DuckDuckGo')
@@ -657,11 +514,11 @@ class LinksWithIconsSettingTab extends PluginSettingTab {
             .setName('Web fallback icon appearance')
             .setDesc('Choose the Lucide icon used when a website has no custom favicon or fails to load.')
             .addDropdown(dropdown => dropdown
-                .addOption('globe', 'Lucide Globe')
-                .addOption('link', 'Lucide Link')
-                .addOption('external-link', 'Lucide External Link')
-                .addOption('compass', 'Lucide Compass')
-                .addOption('globe-2', 'Lucide Globe 2')
+                .addOption('globe', 'Lucide globe')
+                .addOption('link', 'Lucide link')
+                .addOption('external-link', 'Lucide external link')
+                .addOption('compass', 'Lucide compass')
+                .addOption('globe-2', 'Lucide globe 2')
                 .setValue(this.plugin.settings.webFallbackIcon)
                 .onChange(async (value) => {
                     this.plugin.settings.webFallbackIcon = value;
@@ -670,7 +527,7 @@ class LinksWithIconsSettingTab extends PluginSettingTab {
 
         new Setting(containerEl)
             .setName('Ignored domains')
-            .setDesc('Comma-separated list of domains to ignore (e.g. github.com, google.com).')
+            .setDesc('Comma-separated list of domains to ignore, such as example.com.')
             .addText(text => text
                 .setPlaceholder('github.com, google.com')
                 .setValue(this.plugin.settings.ignoredDomains)
@@ -680,7 +537,7 @@ class LinksWithIconsSettingTab extends PluginSettingTab {
                 }));
 
         // ── SECTION: CACHE MANAGEMENT ──
-        new Setting(containerEl).setName('Local Icon Cache').setHeading();
+        new Setting(containerEl).setName('Local icon cache').setHeading();
 
         new Setting(containerEl)
             .setName('Persistent disk cache')
@@ -690,7 +547,7 @@ class LinksWithIconsSettingTab extends PluginSettingTab {
                 .onChange(async (value) => {
                     this.plugin.settings.enableDiskCache = value;
                     await this.plugin.saveSettings();
-                    if (value) this.plugin.saveDiskCache();
+                    await this.plugin.setDiskCacheEnabled(value);
                 }));
 
         const cacheCount = Object.keys(this.plugin.iconCache).length;
@@ -701,14 +558,8 @@ class LinksWithIconsSettingTab extends PluginSettingTab {
                 .setButtonText('Clear cache')
                 .setWarning()
                 .onClick(async () => {
-                    Object.keys(this.plugin.iconCache).forEach(k => delete this.plugin.iconCache[k]);
-                    if (this.plugin.diskCachePath) {
-                        const adapter = this.plugin.app.vault.adapter;
-                        if (await adapter.exists(this.plugin.diskCachePath)) {
-                            await adapter.remove(this.plugin.diskCachePath);
-                        }
-                    }
-                    new Notice('Links with Icons: cache cleared. Reload your note to re-fetch icons.');
+                    await this.plugin.clearIconCache();
+                    new Notice('Icon cache cleared.');
                     this.display(); // refresh count
                 }));
     }
@@ -716,20 +567,45 @@ class LinksWithIconsSettingTab extends PluginSettingTab {
 
 // ── Main Plugin ───────────────────────────────────────────────────────
 
+interface ExtractionJob {
+    cacheKey: string;
+    pathOrExt: string;
+    useAttributes: boolean;
+    generation: number;
+    resolve: (iconData: string) => void;
+    request: Promise<string>;
+}
+
+interface ChildProcessHandle {
+    kill: () => boolean;
+}
+
+interface DiskCachePayload {
+    version: number;
+    icons: Record<string, string>;
+}
+
 export default class LinksWithIconsPlugin extends Plugin {
-    settings: LinksWithIconsSettings;
+    readonly editorRefreshCallbacks = new Set<() => void>();
+    settings!: LinksWithIconsSettings;
+    settingsRevision = 0;
     iconCache: Record<string, string> = {};
-    pendingRequests: Record<string, Promise<string>> = {};
     diskCachePath: string = '';
-    private saveDiskCacheTimer: ReturnType<typeof setTimeout> | null = null;
-    private activeExtractions: number = 0;
-    private extractionQueue: (() => void)[] = [];
+    private readonly pendingRequests = new Map<string, Promise<string>>();
+    private readonly failedExtractions = new Set<string>();
+    private readonly activeProcesses = new Set<ChildProcessHandle>();
+    private saveDiskCacheTimer: number | null = null;
+    private diskCacheWritePromise: Promise<void> | null = null;
+    private activeExtractions = 0;
+    private extractionQueue: ExtractionJob[] = [];
+    private cacheGeneration = 0;
+    private cacheRevision = 0;
+    private cacheDirty = false;
+    private isUnloading = false;
     private static readonly MAX_CONCURRENT_EXTRACTIONS = 5;
-    private pdfModalObserver: MutationObserver | null = null;
+    private static readonly DISK_CACHE_VERSION = 1;
 
-    async onload() {
-        console.log('loading Links with Icons plugin');
-
+    async onload(): Promise<void> {
         await this.loadSettings();
 
         // Set up disk cache path
@@ -741,9 +617,6 @@ export default class LinksWithIconsPlugin extends Plugin {
         await this.loadDiskCache();
 
         this.addSettingTab(new LinksWithIconsSettingTab(this.app, this));
-
-        this.registerPdfModalObserver();
-        this.updatePdfStyle();
 
         // 1. Register CodeMirror 6 Editor Extension (Live Preview)
         this.registerEditorExtension([
@@ -765,7 +638,7 @@ export default class LinksWithIconsPlugin extends Plugin {
                 if (!linkText) return;
 
                 // Web Favicons
-                if (linkText.startsWith('http://') || linkText.startsWith('https://')) {
+                if (isHttpUrl(linkText)) {
                     if (!this.settings.enableWebFavicons) return;
                     const domain = getDomain(linkText);
                     if (!domain || isIgnoredDomain(domain, this.settings.ignoredDomains)) return;
@@ -780,34 +653,18 @@ export default class LinksWithIconsPlugin extends Plugin {
                         parent = parent.parentElement;
                     }
 
-                    const scales = [1.0, 2.0, 1.7, 1.4, 1.2, 1.1, 1.0];
-                    const baseSize = this.settings.iconSize;
-                    
-                    let emSize = baseSize / 16;
-
-                    if (this.settings.enableDynamicSizing) {
-                        if (headingLevel > 0) {
-                            emSize = baseSize / 16;
-                        }
-                    } else {
-                        if (headingLevel > 0) {
-                            emSize = (baseSize / 16) / scales[headingLevel];
-                        }
-                    }
-
-                    const span = activeDocument.createElement('span');
+                    const emSize = getIconSizeEm(this.settings, headingLevel);
+                    const ownerDocument = linkEl.ownerDocument;
+                    const span = ownerDocument.createElement('span');
                     span.addClass('links-with-icons-favicon');
+                    span.toggleClass('links-with-icons-hide-in-pdf', this.settings.hideIconsInPdf);
                     span.style.width = emSize + 'em';
                     span.style.height = emSize + 'em';
 
-                    const img = activeDocument.createElement('img');
+                    const img = ownerDocument.createElement('img');
                     img.src = getFaviconUrl(this.settings.faviconProvider, domain, 64);
-                    img.onload = () => {
-                        if (this.settings.faviconProvider === 'google' && img.naturalWidth === 16 && img.naturalHeight === 16) {
-                            img.remove();
-                            setIcon(span, this.settings.webFallbackIcon);
-                        }
-                    };
+                    img.alt = '';
+                    img.referrerPolicy = 'no-referrer';
                     img.onerror = () => {
                         img.remove();
                         setIcon(span, this.settings.webFallbackIcon);
@@ -819,19 +676,22 @@ export default class LinksWithIconsPlugin extends Plugin {
 
                 // Local file/folder icons (internal or external)
                 const isInternal = linkEl.hasClass('internal-link');
-                const isLocalExternal = !isInternal && (linkText.startsWith('file:///') || linkText.match(/^[a-zA-Z]:\\/));
+                const isLocalExternal = !isInternal && isAbsoluteLocalPath(linkText);
 
                 if (isInternal && !this.settings.enableInternalLinks) return;
                 if (isLocalExternal && !this.settings.enableExternalLinks) return;
 
                 if (isInternal || isLocalExternal) {
-                    const ext = getExtension(linkText).toLowerCase();
+                    const linkPath = parseLinktext(linkText).path || linkText;
+                    const ext = getExtension(linkPath).toLowerCase();
                     if (ext === '.md') return;
 
                     const blacklist = this.getBlacklistedSet();
                     if (ext && blacklist.has(ext)) return;
 
-                    const absPath = resolveAbsolutePath(this.app, linkText);
+                    const absPath = resolveAbsolutePath(this.app, linkPath, ctx.sourcePath);
+                    const iconTarget = getLocalIconTarget(linkPath, absPath);
+                    if (!iconTarget) return;
                     let queryPath = '';
                     let useAttributes = false;
 
@@ -842,11 +702,9 @@ export default class LinksWithIconsPlugin extends Plugin {
                         if (!resolvedExt && !this.settings.enableFolderIcons) return;
                         queryPath = absPath;
                         useAttributes = false;
-                    } else if (ext) {
-                        queryPath = ext;
-                        useAttributes = true;
                     } else {
-                        return;
+                        queryPath = iconTarget.queryPath;
+                        useAttributes = iconTarget.useAttributes;
                     }
 
                     let headingLevel = 0;
@@ -859,44 +717,33 @@ export default class LinksWithIconsPlugin extends Plugin {
                         parent = parent.parentElement;
                     }
 
-                    const scales = [1.0, 2.0, 1.7, 1.4, 1.2, 1.1, 1.0];
-                    const baseSize = this.settings.iconSize;
-                    
-                    let emSize = baseSize / 16;
-
-                    if (this.settings.enableDynamicSizing) {
-                        if (headingLevel > 0) {
-                            emSize = baseSize / 16;
-                        }
-                    } else {
-                        if (headingLevel > 0) {
-                            emSize = (baseSize / 16) / scales[headingLevel];
-                        }
-                    }
-
-                    const span = activeDocument.createElement('span');
+                    const emSize = getIconSizeEm(this.settings, headingLevel);
+                    const ownerDocument = linkEl.ownerDocument;
+                    const span = ownerDocument.createElement('span');
                     span.addClass('links-with-icons-osicon');
+                    span.toggleClass('links-with-icons-hide-in-pdf', this.settings.hideIconsInPdf);
                     span.style.width = emSize + 'em';
                     span.style.height = emSize + 'em';
 
                     const targetExt = useAttributes ? queryPath : getExtension(queryPath).toLowerCase();
                     const isFolder = !targetExt && !useAttributes;
-                    const cacheKey = queryPath + (useAttributes ? "_attr" : "_real");
+                    const cacheKey = this.getIconCacheKey(queryPath, useAttributes);
 
                     if (isFolder && this.settings.folderIconStyle !== 'native') {
                         const iconId = this.settings.folderIconStyle;
                         setIcon(span, iconId);
                     } else if (this.iconCache[cacheKey]) {
-                        const img = activeDocument.createElement('img');
+                        const img = ownerDocument.createElement('img');
                         img.src = this.iconCache[cacheKey];
                         span.appendChild(img);
                     } else if (!Platform.isWin) {
                         const iconId = getLucideIconForExtension(targetExt, isFolder);
                         setIcon(span, iconId);
                     } else {
+                        setIcon(span, getLucideIconForExtension(targetExt, isFolder));
                         void this.getIconForFile(queryPath, useAttributes).then((iconData) => {
                             if (iconData && span.isConnected) {
-                                const img = activeDocument.createElement('img');
+                                const img = ownerDocument.createElement('img');
                                 img.src = iconData;
                                 span.empty();
                                 span.appendChild(img);
@@ -913,95 +760,32 @@ export default class LinksWithIconsPlugin extends Plugin {
         });
     }
 
-    onunload() {
-        console.log('unloading Links with Icons plugin');
-        if (this.pdfModalObserver) {
-            this.pdfModalObserver.disconnect();
-            this.pdfModalObserver = null;
-        }
-        const existingStyle = activeDocument.getElementById('lwi-pdf-style');
-        if (existingStyle) {
-            existingStyle.remove();
-        }
+    onunload(): void {
+        this.isUnloading = true;
+        this.cancelExtractions();
+        this.editorRefreshCallbacks.clear();
         void this.flushDiskCache();
     }
 
-    async loadSettings() {
-        const loaded = (await this.loadData()) as Record<string, unknown> | null;
-        this.settings = Object.assign({}, DEFAULT_SETTINGS, loaded || {});
+    async loadSettings(): Promise<void> {
+        const loaded: unknown = await this.loadData();
+        this.settings = loadValidatedSettings(loaded);
     }
 
-    async saveSettings() {
+    async saveSettings(): Promise<void> {
         await this.saveData(this.settings);
-        this.updatePdfStyle();
-        // Force hot reload of editor options and redraw all decorations instantly
+        this.settingsRevision++;
         this.app.workspace.updateOptions();
+        for (const refresh of this.editorRefreshCallbacks) refresh();
+        this.refreshReadingViews();
     }
 
-    registerPdfModalObserver() {
-        this.pdfModalObserver = new MutationObserver((mutations) => {
-            for (const mutation of mutations) {
-                for (const node of Array.from(mutation.addedNodes)) {
-                    if (node instanceof HTMLElement && node.hasClass('modal-container')) {
-                        const titleEl = node.querySelector('.modal-title');
-                        if (titleEl && titleEl.textContent === 'Export to PDF') {
-                            this.injectPdfSettings(node);
-                        }
-                    }
-                }
+    private refreshReadingViews(): void {
+        this.app.workspace.iterateAllLeaves((leaf) => {
+            if (leaf.view instanceof MarkdownView && leaf.view.getMode() === 'preview') {
+                leaf.view.previewMode.rerender(true);
             }
         });
-        this.pdfModalObserver.observe(document.body, { childList: true, subtree: true });
-    }
-
-    injectPdfSettings(modalEl: HTMLElement) {
-        const modalContent = modalEl.querySelector('.modal-content');
-        if (!modalContent) return;
-
-        // Clean up any existing injected container to prevent duplicates
-        const existing = modalContent.querySelector('.lwi-pdf-settings-wrapper');
-        if (existing) existing.remove();
-
-        const customSection = activeDocument.createElement('div');
-        customSection.addClass('lwi-pdf-settings-wrapper');
-        
-        new Setting(customSection)
-            .setName('Export icons')
-            .setDesc('Include local OS icons and web URL favicons in the generated PDF.')
-            .addToggle(toggle => toggle
-                .setValue(!this.settings.hideIconsInPdf)
-                .onChange(async (value) => {
-                    this.settings.hideIconsInPdf = !value;
-                    await this.saveSettings();
-                }));
-
-        const buttonContainer = modalContent.querySelector('.modal-button-container');
-        if (buttonContainer) {
-            modalContent.insertBefore(customSection, buttonContainer);
-        } else {
-            modalContent.appendChild(customSection);
-        }
-    }
-
-    updatePdfStyle() {
-        const existingStyle = activeDocument.getElementById('lwi-pdf-style');
-        if (existingStyle) {
-            existingStyle.remove();
-        }
-
-        if (this.settings.hideIconsInPdf) {
-            const styleEl = activeDocument.createElement('style');
-            styleEl.id = 'lwi-pdf-style';
-            styleEl.textContent = `
-                @media print {
-                    .links-with-icons-osicon,
-                    .links-with-icons-favicon {
-                        display: none !important;
-                    }
-                }
-            `;
-            activeDocument.head.appendChild(styleEl);
-        }
     }
 
     // ── Disk cache helpers ────────────────────────────────────────────────
@@ -1012,43 +796,110 @@ export default class LinksWithIconsPlugin extends Plugin {
             const adapter = this.app.vault.adapter;
             if (await adapter.exists(this.diskCachePath)) {
                 const data = await adapter.read(this.diskCachePath);
-                const parsed = JSON.parse(data) as Record<string, string>;
-                Object.assign(this.iconCache, parsed);
+                const parsed = JSON.parse(data) as DiskCachePayload | Record<string, string>;
+                const icons = 'version' in parsed && 'icons' in parsed
+                    ? parsed.version === LinksWithIconsPlugin.DISK_CACHE_VERSION ? parsed.icons : {}
+                    : parsed;
+                for (const [key, value] of Object.entries(icons)) {
+                    if (typeof value === 'string' && value.startsWith('data:image/png;base64,')) {
+                        this.iconCache[key] = value;
+                    }
+                }
             }
-        } catch (e) {
-            console.error('Links with Icons: failed to load disk cache', e);
+        } catch (error) {
+            console.error('Links with Icons: failed to load disk cache', error);
         }
     }
 
-    saveDiskCache(): void {
+    private scheduleDiskCacheSave(): void {
         if (!this.diskCachePath || !this.settings.enableDiskCache) return;
-        // Debounce: wait 2 seconds of inactivity before writing to disk
-        if (this.saveDiskCacheTimer) window.clearTimeout(this.saveDiskCacheTimer);
+        this.cacheDirty = true;
+        this.cacheRevision++;
+        if (this.saveDiskCacheTimer !== null) window.clearTimeout(this.saveDiskCacheTimer);
         this.saveDiskCacheTimer = window.setTimeout(() => {
-            void (async () => {
-                try {
-                    const adapter = this.app.vault.adapter;
-                    await adapter.write(this.diskCachePath, JSON.stringify(this.iconCache));
-                } catch (e) {
-                    console.error('Links with Icons: failed to save disk cache', e);
-                }
-            })();
+            this.saveDiskCacheTimer = null;
+            void this.flushDiskCache();
         }, 2000);
     }
 
-    /** Flush any pending debounced disk cache write immediately. */
     async flushDiskCache(): Promise<void> {
-        if (this.saveDiskCacheTimer) {
+        if (this.saveDiskCacheTimer !== null) {
             window.clearTimeout(this.saveDiskCacheTimer);
             this.saveDiskCacheTimer = null;
         }
-        if (!this.diskCachePath || !this.settings.enableDiskCache) return;
-        try {
-            const adapter = this.app.vault.adapter;
-            await adapter.write(this.diskCachePath, JSON.stringify(this.iconCache));
-        } catch (e) {
-            console.error('Links with Icons: failed to save disk cache', e);
+        if (!this.diskCachePath || !this.settings.enableDiskCache || !this.cacheDirty) return;
+        if (this.diskCacheWritePromise) {
+            try {
+                await this.diskCacheWritePromise;
+            } catch {
+                // The in-flight writer reports its own error below.
+            }
         }
+        if (!this.cacheDirty) return;
+
+        const revision = this.cacheRevision;
+        const adapter = this.app.vault.adapter;
+        const payload: DiskCachePayload = {
+            version: LinksWithIconsPlugin.DISK_CACHE_VERSION,
+            icons: this.iconCache,
+        };
+        const writePromise = adapter.write(this.diskCachePath, JSON.stringify(payload));
+        this.diskCacheWritePromise = writePromise;
+        try {
+            await writePromise;
+            if (revision === this.cacheRevision) this.cacheDirty = false;
+        } catch (error) {
+            console.error('Links with Icons: failed to save disk cache', error);
+        } finally {
+            if (this.diskCacheWritePromise === writePromise) this.diskCacheWritePromise = null;
+        }
+    }
+
+    async setDiskCacheEnabled(enabled: boolean): Promise<void> {
+        if (enabled) {
+            this.cacheDirty = true;
+            this.cacheRevision++;
+            await this.flushDiskCache();
+        } else {
+            await this.deleteDiskCache();
+        }
+    }
+
+    async clearIconCache(): Promise<void> {
+        this.cacheGeneration++;
+        this.cancelExtractions();
+        this.iconCache = {};
+        this.failedExtractions.clear();
+        this.cacheDirty = false;
+        this.cacheRevision++;
+        await this.deleteDiskCache();
+        this.settingsRevision++;
+        this.app.workspace.updateOptions();
+        for (const refresh of this.editorRefreshCallbacks) refresh();
+        this.refreshReadingViews();
+    }
+
+    private async deleteDiskCache(): Promise<void> {
+        if (this.saveDiskCacheTimer !== null) {
+            window.clearTimeout(this.saveDiskCacheTimer);
+            this.saveDiskCacheTimer = null;
+        }
+        if (!this.diskCachePath) return;
+        if (this.diskCacheWritePromise) {
+            try {
+                await this.diskCacheWritePromise;
+            } catch {
+                // The writer reports its own error; continue so cache removal can still succeed.
+            }
+        }
+        const adapter = this.app.vault.adapter;
+        if (await adapter.exists(this.diskCachePath)) {
+            await adapter.remove(this.diskCachePath);
+        }
+    }
+
+    getIconCacheKey(pathOrExt: string, useAttributes: boolean): string {
+        return `${pathOrExt}${useAttributes ? '_attr' : '_real'}`;
     }
 
     // ── Icon extraction ───────────────────────────────────────────────────
@@ -1063,9 +914,10 @@ export default class LinksWithIconsPlugin extends Plugin {
         );
     }
 
-    private runExtraction(cacheKey: string, escapedPath: string, psBool: string): Promise<string> {
+    private runExtraction(job: ExtractionJob): Promise<string> {
         return new Promise((resolve) => {
-            // Always request Jumbo (256x256) and resize to 64x64 in C# for crispness
+            const escapedPath = job.pathOrExt.replace(/'/g, "''");
+            const psBool = job.useAttributes ? '$true' : '$false';
             const imgListIdx = 4;
             const psScript = `
 Add-Type -TypeDefinition @"
@@ -1106,20 +958,20 @@ public class ShellIcon {
         if (res == IntPtr.Zero) return "";
         Guid iidImageList = new Guid("46EB5926-582E-4017-9FDF-E8998DAA0950");
         IntPtr imageList = IntPtr.Zero;
-        SHGetImageList(imageListSize, ref iidImageList, ref imageList);
-        if (imageList == IntPtr.Zero) return "";
+        int imageListResult = SHGetImageList(imageListSize, ref iidImageList, ref imageList);
+        if (imageListResult != 0 || imageList == IntPtr.Zero) return "";
         IntPtr hIcon = ImageList_GetIcon(imageList, shinfo.iIcon, 0);
         if (hIcon == IntPtr.Zero) return "";
-        Icon icon = Icon.FromHandle(hIcon);
-        Bitmap bmp = icon.ToBitmap();
-        Bitmap resized = new Bitmap(bmp, new System.Drawing.Size(64, 64));
-        System.IO.MemoryStream ms = new System.IO.MemoryStream();
-        resized.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
-        string b64 = Convert.ToBase64String(ms.ToArray());
-        bmp.Dispose();
-        resized.Dispose();
-        DestroyIcon(hIcon);
-        return "data:image/png;base64," + b64;
+        try {
+            using (Bitmap bmp = Icon.FromHandle(hIcon).ToBitmap())
+            using (Bitmap resized = new Bitmap(bmp, new System.Drawing.Size(64, 64)))
+            using (System.IO.MemoryStream ms = new System.IO.MemoryStream()) {
+                resized.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
+                return "data:image/png;base64," + Convert.ToBase64String(ms.ToArray());
+            }
+        } finally {
+            DestroyIcon(hIcon);
+        }
     }
 }
 "@ -ReferencedAssemblies System.Drawing
@@ -1130,59 +982,108 @@ Write-Output ([ShellIcon]::GetBase64Icon('${escapedPath}', ${psBool}, ${imgListI
 
             const req = (window as unknown as { require: (module: string) => unknown })['require'];
             const childProcess = req('child_process') as {
-                exec: (cmd: string, cb: (error: Error | null, stdout: string) => void) => void;
+                execFile: (
+                    file: string,
+                    args: string[],
+                    options: { encoding: 'utf8'; maxBuffer: number; timeout: number; windowsHide: boolean },
+                    callback: (error: Error | null, stdout: string) => void,
+                ) => ChildProcessHandle;
             };
-            childProcess.exec(`powershell -ExecutionPolicy Bypass -EncodedCommand ${encodedCommand}`, (error: Error | null, stdout: string) => {
-                this.activeExtractions--;
-                this.drainExtractionQueue();
-
-                const out = stdout.trim();
-                if (error || !out) {
-                    console.error('Links with Icons extraction error for', escapedPath, error || 'Empty output');
-                    resolve('');
-                } else {
-                    this.iconCache[cacheKey] = out;
-                    this.saveDiskCache();
-                    resolve(out);
-                }
-                delete this.pendingRequests[cacheKey];
-            });
+            const processHandle = childProcess.execFile(
+                'powershell.exe',
+                ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encodedCommand],
+                { encoding: 'utf8', maxBuffer: 512 * 1024, timeout: 15_000, windowsHide: true },
+                (error: Error | null, stdout: string) => {
+                    this.activeProcesses.delete(processHandle);
+                    const out = stdout.trim();
+                    if (error || !out.startsWith('data:image/png;base64,')) {
+                        resolve('');
+                    } else {
+                        resolve(out);
+                    }
+                },
+            );
+            this.activeProcesses.add(processHandle);
         });
     }
 
     private drainExtractionQueue(): void {
-        while (this.extractionQueue.length > 0 && this.activeExtractions < LinksWithIconsPlugin.MAX_CONCURRENT_EXTRACTIONS) {
+        if (this.isUnloading) return;
+        while (this.extractionQueue.length > 0
+            && this.activeExtractions < LinksWithIconsPlugin.MAX_CONCURRENT_EXTRACTIONS) {
             const next = this.extractionQueue.shift();
-            if (next) next();
+            if (next) this.startExtraction(next);
         }
     }
 
-    getIconForFile(pathOrExt: string, useAttributes: boolean): Promise<string> {
-        const cacheKey = pathOrExt + (useAttributes ? "_attr" : "_real");
-        if (this.iconCache[cacheKey]) return Promise.resolve(this.iconCache[cacheKey]);
-        if (this.pendingRequests[cacheKey] !== undefined) return this.pendingRequests[cacheKey];
-
-        if (!Platform.isWin) {
-            return Promise.resolve('');
+    private startExtraction(job: ExtractionJob): void {
+        if (this.isUnloading || job.generation !== this.cacheGeneration) {
+            job.resolve('');
+            return;
         }
 
-        const escapedPath = pathOrExt.replace(/'/g, "''");
-        const psBool = useAttributes ? "$true" : "$false";
+        this.activeExtractions++;
+        void this.runExtraction(job)
+            .then((iconData) => {
+                if (job.generation !== this.cacheGeneration || this.isUnloading) return '';
+                if (iconData) {
+                    this.iconCache[job.cacheKey] = iconData;
+                    this.scheduleDiskCacheSave();
+                } else {
+                    this.failedExtractions.add(job.cacheKey);
+                }
+                return iconData;
+            })
+            .catch((error: unknown) => {
+                if (job.generation === this.cacheGeneration) this.failedExtractions.add(job.cacheKey);
+                console.error('Links with Icons: native icon extraction failed', error);
+                return '';
+            })
+            .then(job.resolve)
+            .finally(() => {
+                this.activeExtractions--;
+                if (this.pendingRequests.get(job.cacheKey) === job.request) {
+                    this.pendingRequests.delete(job.cacheKey);
+                }
+                this.drainExtractionQueue();
+            });
+    }
 
+    private cancelExtractions(): void {
+        const queuedJobs = this.extractionQueue;
+        this.extractionQueue = [];
+        for (const job of queuedJobs) job.resolve('');
+        for (const processHandle of this.activeProcesses) processHandle.kill();
+        this.activeProcesses.clear();
+        this.pendingRequests.clear();
+    }
+
+    getIconForFile(pathOrExt: string, useAttributes: boolean): Promise<string> {
+        const cacheKey = this.getIconCacheKey(pathOrExt, useAttributes);
+        const cachedIcon = this.iconCache[cacheKey];
+        if (cachedIcon) return Promise.resolve(cachedIcon);
+        if (this.failedExtractions.has(cacheKey) || !Platform.isWin || this.isUnloading) return Promise.resolve('');
+        const pendingRequest = this.pendingRequests.get(cacheKey);
+        if (pendingRequest) return pendingRequest;
+
+        let resolveRequest: (iconData: string) => void = () => undefined;
         const promise = new Promise<string>((resolve) => {
-            const startExtraction = () => {
-                this.activeExtractions++;
-                void this.runExtraction(cacheKey, escapedPath, psBool).then(resolve);
-            };
-
-            if (this.activeExtractions < LinksWithIconsPlugin.MAX_CONCURRENT_EXTRACTIONS) {
-                startExtraction();
-            } else {
-                this.extractionQueue.push(startExtraction);
-            }
+            resolveRequest = resolve;
         });
-
-        this.pendingRequests[cacheKey] = promise;
+        const job: ExtractionJob = {
+            cacheKey,
+            pathOrExt,
+            useAttributes,
+            generation: this.cacheGeneration,
+            resolve: resolveRequest,
+            request: promise,
+        };
+        this.pendingRequests.set(cacheKey, promise);
+        if (this.activeExtractions < LinksWithIconsPlugin.MAX_CONCURRENT_EXTRACTIONS) {
+            this.startExtraction(job);
+        } else {
+            this.extractionQueue.push(job);
+        }
         return promise;
     }
 }

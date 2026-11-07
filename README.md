@@ -1,20 +1,40 @@
 # Links with Icons
 
-Links with Icons is an Obsidian community plugin that displays native OS file icons next to local file links and website favicons next to web links in both Live Preview and Reading View.
+**Know what a link leads to before you open it.**
 
-## Features
+Links with Icons adds recognizable file, folder, and website icons beside links in your Obsidian notes. Spot a spreadsheet among project documents, pick out a PDF in your reading list, or recognize a website in a collection of research links—without opening each link to check.
 
-- **Local File Icons**: Displays native application icons for internal wiki-links (`[[document.xlsx]]`) and external file paths (`[Label](file:///C:/...)`), including folder icons.
-- **Web Favicons**: Displays website favicons for external web links (`[Google](https://google.com)`).
-- **Clickable Targets**: Clicking on the icon navigates to the target page or opens the local file/URL.
-- **Zoom Sizing**: Sized using relative CSS units (`em`) so icons scale proportionally with font size and note zoom levels.
-- **Dynamic Sizing**: Automatically adjusts the relative icon size depending on whether the link is in body text or in a heading (H1–H6).
-- **Fallback Icons**: Provides cross-platform fallback icons using Obsidian's native Lucide library on non-Windows platforms or if favicon extraction fails.
-- **Performance**: Restricts background processes to a maximum of 5 concurrent runs, and debounces cache saves to disk to minimize writes.
+Your links keep their existing text. The icons provide an extra visual cue, making notes full of resources easier to scan.
+
+## Why install it?
+
+- **Find the right resource faster.** Distinguish documents, spreadsheets, presentations, media, and folders at a glance.
+- **Make research lists easier to browse.** Recognize linked websites by their familiar site icons.
+- **Keep project resources together.** Link to attachments in your vault or files and folders elsewhere on your computer, with visual cues beside each supported link.
+- **Keep your notes readable.** Ordinary Markdown notes and unresolved vault links stay undecorated. Embedded content and code are left alone.
+- **Choose the look that suits your notes.** Adjust icon size, folder appearance, and which links get icons. Include icons in PDF exports or leave them out.
+
+Works in Live Preview and Reading View. On Windows, local files use their native application icons. macOS, Linux, and mobile use built-in file-type icons instead.
+
+Click an attachment icon to open the file in Obsidian, or a website icon to visit the site. While Windows retrieves a native icon, a file-type icon is shown immediately.
+
+## Examples
+
+| In your notes | What the icon helps you recognize |
+| --- | --- |
+| `[[Budget.xlsx\|Project budget]]` | A spreadsheet attached to your project |
+| `[[Research paper.pdf\|Read next]]` | A PDF in your reading queue |
+| `[Project files](file:///C:/Projects/Example/)` | A folder on your computer |
+| `[Reference](https://www.wikipedia.org)` | A website by its familiar icon |
+
+Local file and folder examples depend on those resources being available on your device. Unresolved vault links never receive a guessed file icon, even if their names contain periods.
 
 ## Installation
 
+In Obsidian, open **Settings → Community plugins → Browse**, search for **Links with Icons**, then install and enable it. Icons appear beside supported links automatically.
+
 ### Manual Installation
+
 1. Download `main.js`, `manifest.json`, and `styles.css` from the latest release.
 2. Inside your Obsidian vault, create a folder named `links-with-icons` under `.obsidian/plugins/`.
 3. Copy the downloaded files into that folder.
@@ -29,6 +49,25 @@ Links with Icons is an Obsidian community plugin that displays native OS file ic
 - **Blacklisted Extensions**: Prevent specific file types (e.g. `md`, `txt`, `canvas`) from showing icons.
 - **Favicon Provider & Ignored Domains**: Customize web icon providers (Google, DuckDuckGo, Icon Horse, or Direct) and exclude specific domains.
 - **Web Fallback Icon**: Select the Lucide icon to use when a favicon fails to load.
+- **PDF Export**: Include or omit icons in generated PDFs.
+
+Web favicon providers receive the domain names of links displayed in a rendered note. Select the direct provider if you prefer requests to go to each linked site instead of a centralized favicon service, or disable web favicons entirely.
+
+## Development
+
+```powershell
+npm install
+npm run check
+npm run build
+```
+
+Building only writes `main.js` in the repository. To deploy into a development vault, set `OBSIDIAN_PLUGIN_DIR` to the target plugin directory and run `npm run deploy`.
+
+Release assets published from version 1.1.0 onward include GitHub build-provenance attestations. With GitHub CLI installed, an asset can be verified using:
+
+```powershell
+gh attestation verify main.js --repo Radegast546/links-with-icons
+```
 
 ## License
 
