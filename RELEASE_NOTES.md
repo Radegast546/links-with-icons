@@ -15,3 +15,5 @@ It retains the improvements from 1.1.1:
 - Clarify the README and plugin description with concrete examples.
 
 Downloadable plugin files remain `main.js`, `manifest.json`, and `styles.css`.
+
+The repository now runs CodeQL security analysis and weekly Dependabot update checks for npm dependencies and GitHub Actions. These complement the existing reproducible builds and release-asset attestations; they do not replace Obsidian's own review or malware scanning.

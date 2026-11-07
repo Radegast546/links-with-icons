@@ -1,3 +1,8 @@
 node_modules/
 data.json
 *.map
+/tests/
+/vitest.config.ts
+/lessons_learned.md
+/getIcon.ps1
+/scripts/native-smoke-test.mjs

@@ -9,10 +9,8 @@
     "deploy": "node esbuild.config.mjs production --deploy",
     "bump-version": "node scripts/bump-version.mjs",
     "lint": "eslint .",
-    "test": "vitest run",
-    "test:native": "node scripts/native-smoke-test.mjs",
     "typecheck": "tsc --noEmit --skipLibCheck",
-    "check": "npm run typecheck && npm run lint && npm test",
+    "check": "npm run typecheck && npm run lint",
     "verify-version": "node scripts/verify-version.mjs"
   },
   "keywords": [
@@ -41,7 +39,6 @@
     "obsidian": "1.14.4",
     "tslib": "^2.8.1",
     "typescript": "^5.8.3",
-    "typescript-eslint": "^8.59.1",
-    "vitest": "^4.1.11"
+    "typescript-eslint": "^8.59.1"
   }
 }

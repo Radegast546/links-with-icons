@@ -7,7 +7,9 @@ export default defineConfig([
         ignores: [
             'main.js',
             'node_modules/**',
-            'tests/*.js',
+            'tests/**',
+            'vitest.config.ts',
+            'scripts/native-smoke-test.mjs',
         ],
     },
     ...obsidianmd.configs.recommended,
@@ -30,11 +32,7 @@ export default defineConfig([
         },
     },
     {
-        files: ['tests/**/*.ts'],
-        rules: { 'obsidianmd/no-nodejs-modules': 'off' },
-    },
-    {
-        files: ['esbuild.config.mjs', 'scripts/**/*.mjs', 'vitest.config.ts'],
+        files: ['esbuild.config.mjs', 'scripts/**/*.mjs'],
         rules: {
             'no-console': 'off',
             'obsidianmd/no-nodejs-modules': 'off',

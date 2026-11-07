@@ -1,8 +1,11 @@
 # Changelog
 
-## 1.1.2 — Unreleased
+## 1.1.2 — 2026-11-07
 
 - Remove native document-fragment creation from all icon rendering paths. Use Obsidian helpers directly and adopt elements into the target document for pop-out compatibility.
+- Add CodeQL security analysis on pushes, pull requests, and a weekly schedule.
+- Add weekly Dependabot update checks for npm dependencies and GitHub Actions.
+- Remove development notes, experimental scripts, and tests from the public checkout; keep build, typecheck, lint, and security automation.
 
 ## 1.1.1 — 2026-11-07
 

@@ -1,0 +1,6 @@
+name: Links with Icons security analysis
+
+# Scan the maintained sources rather than the generated release bundle.
+paths-ignore:
+  - main.js
+  - node_modules
