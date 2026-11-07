@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.1.1 — 2026-11-07
+
+- Add a screenshot showing file, folder, and website icons in real notes.
+- Keep inline link icons visible when editing surrounding prose; restore them when leaving the link or moving focus to another pane.
+- Add settings search support on Obsidian 1.13+ while retaining the settings interface on older versions.
+- Use Obsidian DOM helpers in both views, preserving pop-out window compatibility.
+- Explicitly type the Windows encoding helper instead of relying on a global Buffer.
+- Remove deprecated settings refresh/button calls and unnecessary print CSS priority.
+- Re-enable the corresponding lint rules and clarify the plugin description.
+
 ## 1.1.0 — 2026-11-07
 
 ### Added

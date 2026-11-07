@@ -31,7 +31,8 @@
 }
 
 @media print {
-    .links-with-icons-hide-in-pdf {
-        display: none !important;
+    .links-with-icons-osicon.links-with-icons-hide-in-pdf,
+    .links-with-icons-favicon.links-with-icons-hide-in-pdf {
+        display: none;
     }
 }

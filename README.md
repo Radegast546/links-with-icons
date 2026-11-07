@@ -1,22 +1,28 @@
 # Links with Icons
 
-**Know what a link leads to before you open it.**
+Show file, folder, and website icons next to links in your notes.
 
-Links with Icons adds recognizable file, folder, and website icons beside links in your Obsidian notes. Spot a spreadsheet among project documents, pick out a PDF in your reading list, or recognize a website in a collection of research links—without opening each link to check.
+![Links with Icons in Obsidian: folder, video, ZIP, Excel, PowerPoint, and website icons beside links, including a link within a sentence.](https://raw.githubusercontent.com/Radegast546/links-with-icons/1.1.1/assets/screenshots/link-examples.png)
 
-Your links keep their existing text. The icons provide an extra visual cue, making notes full of resources easier to scan.
+*Real examples on Windows: native file and folder icons, website icons, and icons that scale with headings.*
 
-## Why install it?
+On Windows, Links with Icons brings the familiar application icons from File Explorer into Obsidian. A link to an Excel spreadsheet gets its Excel icon; a Word document gets its Word icon. Web links show the site's icon, just like a browser bookmark.
 
-- **Find the right resource faster.** Distinguish documents, spreadsheets, presentations, media, and folders at a glance.
-- **Make research lists easier to browse.** Recognize linked websites by their familiar site icons.
-- **Keep project resources together.** Link to attachments in your vault or files and folders elsewhere on your computer, with visual cues beside each supported link.
-- **Keep your notes readable.** Ordinary Markdown notes and unresolved vault links stay undecorated. Embedded content and code are left alone.
-- **Choose the look that suits your notes.** Adjust icon size, folder appearance, and which links get icons. Include icons in PDF exports or leave them out.
+Use it for project notes with linked documents, reading lists with PDFs, or collections of web bookmarks. The icons help you tell those resources apart even when the links have short labels such as “Budget”, “Read next”, or “Reference”.
 
-Works in Live Preview and Reading View. On Windows, local files use their native application icons. macOS, Linux, and mobile use built-in file-type icons instead.
+## What gets an icon?
 
-Click an attachment icon to open the file in Obsidian, or a website icon to visit the site. While Windows retrieves a native icon, a file-type icon is shown immediately.
+- **Files:** PDFs, spreadsheets, documents, presentations, audio, video, and other attachments linked from your notes.
+- **Folders:** links to folders on your computer.
+- **Websites:** links to websites, with their site icons.
+
+Works in Live Preview and Reading View with your existing links. Enable the plugin to start seeing icons; no CSS snippets or changes to your notes are needed. Ordinary Markdown notes and unresolved vault links are left alone.
+
+Windows icons reflect your installed apps and file associations. On macOS, Linux, and mobile, local links use built-in file-type icons instead. Files outside your vault must be accessible on the device you're using.
+
+## Make it fit your notes
+
+Choose the icon size and folder appearance, hide icons for selected file types or websites, and decide whether to include icons in PDF exports. Click an icon to follow its link.
 
 ## Examples
 

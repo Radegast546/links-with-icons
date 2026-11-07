@@ -23,14 +23,15 @@ export default defineConfig([
             },
         },
         rules: {
-            '@typescript-eslint/no-deprecated': 'off',
-            'obsidianmd/prefer-create-el': 'off',
-            'obsidianmd/settings-tab/prefer-setting-definitions': 'off',
             'obsidianmd/ui/sentence-case': ['warn', {
                 acronyms: ['OS', 'PDF', 'URL', 'H1-H6'],
                 brands: ['DuckDuckGo', 'GitHub', 'Google', 'Icon Horse', 'Links with Icons', 'Lucide', 'Markdown'],
             }],
         },
+    },
+    {
+        files: ['tests/**/*.ts'],
+        rules: { 'obsidianmd/no-nodejs-modules': 'off' },
     },
     {
         files: ['esbuild.config.mjs', 'scripts/**/*.mjs', 'vitest.config.ts'],

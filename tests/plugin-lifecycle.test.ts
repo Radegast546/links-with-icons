@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Platform, type App, type PluginManifest } from 'obsidian';
+import type { PluginSettingTab, Setting } from 'obsidian';
 import LinksWithIconsPlugin from '../main';
 import type { MarkdownPostProcessor, MarkdownPostProcessorContext } from 'obsidian';
+import { Buffer } from 'node:buffer';
+import { EditorState, EditorSelection } from '@codemirror/state';
+import { ViewPlugin, type DecorationSet, type EditorView, type ViewUpdate } from '@codemirror/view';
 
 function harness() {
     const calls: { finish: (error: Error | null, stdout: string) => void; kill: ReturnType<typeof vi.fn> }[] = [];
@@ -10,7 +14,7 @@ function harness() {
         calls.push({ finish, kill });
         return { kill };
     });
-    vi.stubGlobal('window', { require: () => ({ execFile }), setTimeout, clearTimeout });
+    vi.stubGlobal('window', { require: (module: string) => module === 'buffer' ? { Buffer } : { execFile }, setTimeout, clearTimeout });
     const app = {
         workspace: { updateOptions: vi.fn(), iterateAllLeaves: vi.fn() },
         vault: { adapter: { exists: vi.fn(async () => false) } },
@@ -25,9 +29,70 @@ function harness() {
     return { plugin, calls, execFile };
 }
 
-afterEach(() => { Platform.isWin = true; vi.unstubAllGlobals(); });
+afterEach(() => { Platform.isWin = true; vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+describe('Live Preview cursor lifecycle', () => {
+    it('keeps inline icons at the end of the line and restores them after leaving link syntax or editor focus', async () => {
+        const { plugin } = harness();
+        const define = vi.spyOn(ViewPlugin, 'define');
+        await plugin.onload();
+        const create = define.mock.calls[0]?.[0];
+        if (!create) throw new Error('Editor plugin was not registered');
+        const markdown = 'you can click on the link [Link 2](https://example.com) or its icon\n\nOther line';
+        let state = EditorState.create({ doc: markdown, selection: { anchor: markdown.length } });
+        const view = { state, visibleRanges: [{ from: 0, to: markdown.length }], hasFocus: true, dispatch: vi.fn() };
+        const value = create(view as unknown as EditorView, undefined) as { decorations: DecorationSet; update: (update: ViewUpdate) => void; destroy: () => void };
+        const move = (position: number, focused = true) => {
+            const previous = state;
+            const focusChanged = view.hasFocus !== focused;
+            state = state.update({ selection: EditorSelection.cursor(position) }).state;
+            view.state = state;
+            view.hasFocus = focused;
+            value.update({ view, state, startState: previous, docChanged: false, viewportChanged: false,
+                selectionSet: true, focusChanged } as unknown as ViewUpdate);
+        };
+        expect(value.decorations.size).toBe(1);
+        move(markdown.indexOf('\n'));
+        expect(value.decorations.size).toBe(1);
+        move(markdown.indexOf('Link 2'));
+        expect(value.decorations.size).toBe(0);
+        move(0);
+        expect(value.decorations.size).toBe(1);
+        move(markdown.indexOf('Link 2'));
+        expect(value.decorations.size).toBe(0);
+        view.hasFocus = false;
+        value.update({ view, state, startState: state, docChanged: false, viewportChanged: false,
+            selectionSet: false, focusChanged: true } as unknown as ViewUpdate);
+        expect(value.decorations.size).toBe(1);
+        move(markdown.length);
+        expect(value.decorations.size).toBe(1);
+        value.destroy();
+        expect(plugin.editorRefreshCallbacks.size).toBe(0);
+        plugin.onunload();
+    });
+});
 
 describe('native extraction lifecycle', () => {
+    it('exposes searchable settings and preserves the PDF toggle behavior', async () => {
+        const { plugin } = harness();
+        await plugin.onload();
+        const tab = (plugin as unknown as { settingTab: PluginSettingTab }).settingTab;
+        const definitions = tab.getSettingDefinitions();
+        expect(definitions.filter((definition) => 'searchable' in definition && definition.searchable).length).toBe(14);
+        const definition = definitions.find((item) => 'name' in item && item.name === 'Export icons to PDF');
+        let change: ((value: boolean) => Promise<void>) | undefined;
+        const toggle = {
+            setValue(value: boolean) { expect(value).toBe(true); return this; },
+            onChange(callback: (value: boolean) => Promise<void>) { change = callback; return this; },
+        };
+        const setting = { addToggle: (configure: (value: typeof toggle) => void) => configure(toggle) };
+        if (!definition || !('render' in definition) || !definition.render) throw new Error('Missing PDF setting');
+        definition.render(setting as unknown as Setting, {} as never);
+        expect(change).toBeDefined();
+        await change?.(false);
+        expect(plugin.settings.hideIconsInPdf).toBe(true);
+        plugin.onunload();
+    });
     it('actively refreshes idle editors after changing display settings', async () => {
         const { plugin } = harness();
         const refresh = vi.fn();
@@ -84,9 +149,8 @@ describe('Reading View integration', () => {
         await plugin.onload();
         const callback = (plugin as unknown as { postProcessor: MarkdownPostProcessor }).postProcessor;
         const created: unknown[] = [];
-        const ownerDocument = {
-            createElement: () => ({ addClass: vi.fn(), toggleClass: vi.fn(), style: {}, appendChild: vi.fn() }),
-        };
+        const makeElement = () => ({ addClass: vi.fn(), toggleClass: vi.fn(), style: {}, appendChild: vi.fn() });
+        const ownerDocument = { createDocumentFragment: () => ({ createSpan: makeElement, createEl: makeElement }) };
         const makeLink = (target: string) => ({
             querySelector: () => null,
             getAttribute: (attribute: string) => attribute === 'data-href' ? target : null,

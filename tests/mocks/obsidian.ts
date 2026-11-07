@@ -3,10 +3,11 @@ import type { MarkdownPostProcessor } from 'obsidian';
 
 export class Plugin {
     postProcessor?: MarkdownPostProcessor;
+    settingTab?: PluginSettingTab;
     constructor(public app: unknown, public manifest: unknown) {}
     async loadData(): Promise<unknown> { return null; }
     async saveData(): Promise<void> {}
-    addSettingTab(): void {}
+    addSettingTab(tab: PluginSettingTab): void { this.settingTab = tab; }
     registerEditorExtension(): void {}
     registerMarkdownPostProcessor(callback: MarkdownPostProcessor): void { this.postProcessor = callback; }
 }

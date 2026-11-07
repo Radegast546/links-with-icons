@@ -2315,7 +2315,7 @@ var IconWidget = class extends import_view.WidgetType {
   }
   toDOM() {
     const ownerDocument = this.view.dom.ownerDocument;
-    const span = ownerDocument.createElement("span");
+    const span = ownerDocument.createDocumentFragment().createSpan();
     const size = `${getIconSizeEm(this.plugin.settings, this.headingLevel)}em`;
     span.addClass("links-with-icons-osicon");
     span.toggleClass("links-with-icons-hide-in-pdf", this.plugin.settings.hideIconsInPdf);
@@ -2328,7 +2328,7 @@ var IconWidget = class extends import_view.WidgetType {
     if (isFolder && this.plugin.settings.folderIconStyle !== "native") {
       (0, import_obsidian.setIcon)(span, this.plugin.settings.folderIconStyle);
     } else if (cachedIcon) {
-      const img = ownerDocument.createElement("img");
+      const img = ownerDocument.createDocumentFragment().createEl("img");
       img.src = cachedIcon;
       span.appendChild(img);
     } else if (!import_obsidian.Platform.isWin) {
@@ -2338,7 +2338,7 @@ var IconWidget = class extends import_view.WidgetType {
       void this.plugin.getIconForFile(this.queryPath, this.useAttributes).then((iconData) => {
         if (this.settingsRevision !== this.plugin.settingsRevision) return;
         if (iconData && span.isConnected) {
-          const img = ownerDocument.createElement("img");
+          const img = ownerDocument.createDocumentFragment().createEl("img");
           img.src = iconData;
           span.empty();
           span.appendChild(img);
@@ -2374,13 +2374,13 @@ var FaviconWidget = class extends import_view.WidgetType {
   }
   toDOM() {
     const ownerDocument = this.view.dom.ownerDocument;
-    const span = ownerDocument.createElement("span");
+    const span = ownerDocument.createDocumentFragment().createSpan();
     const size = `${getIconSizeEm(this.plugin.settings, this.headingLevel)}em`;
     span.addClass("links-with-icons-favicon");
     span.toggleClass("links-with-icons-hide-in-pdf", this.plugin.settings.hideIconsInPdf);
     span.style.width = size;
     span.style.height = size;
-    const img = ownerDocument.createElement("img");
+    const img = ownerDocument.createDocumentFragment().createEl("img");
     img.src = getFaviconUrl(this.plugin.settings.faviconProvider, this.domain, 64);
     img.alt = "";
     img.referrerPolicy = "no-referrer";
@@ -2429,22 +2429,16 @@ function buildDecorations(view, plugin, tree) {
   const decos = [];
   const blacklist = plugin.getBlacklistedSet();
   const sourcePath = getEditorSourcePath(view.state);
-  const selection = view.state.selection;
-  const activeLines = /* @__PURE__ */ new Set();
-  for (const range of selection.ranges) {
-    const startLine = view.state.doc.lineAt(range.from).number;
-    const endLine = view.state.doc.lineAt(range.to).number;
-    for (let i = startLine; i <= endLine; i++) {
-      activeLines.add(i);
-    }
-  }
   const documentText = view.state.doc.toString();
   const links = collectMarkdownLinks(documentText, tree, getVisibleLineRanges(view));
   for (const link of links) {
     if (link.kind === "wiki" && !plugin.settings.enableInternalLinks) continue;
     const linkText = link.kind === "markdown" ? normalizeMarkdownDestination(link.target) : link.target;
     const line = view.state.doc.lineAt(link.from);
-    if (activeLines.has(line.number)) continue;
+    const editingLink = view.hasFocus && view.state.selection.ranges.some(
+      (range) => range.empty ? range.from >= link.from && range.from < link.to : range.from < link.to && range.to > link.from
+    );
+    if (editingLink) continue;
     const headingMatch = line.text.match(/^\s{0,3}(#{1,6})(?:\s|$)/);
     const headingLevel = (_b = (_a = headingMatch == null ? void 0 : headingMatch[1]) == null ? void 0 : _a.length) != null ? _b : 0;
     if (isHttpUrl(linkText)) {
@@ -2541,7 +2535,7 @@ var IconViewPlugin = class {
       const fragments = import_common2.TreeFragment.applyChanges(import_common2.TreeFragment.addTree(this.tree), changes);
       this.tree = parser.parse(update.state.doc.toString(), fragments);
     }
-    if (update.docChanged || update.viewportChanged || update.selectionSet || this.revision !== this.plugin.settingsRevision || update.startState !== update.state) {
+    if (update.docChanged || update.viewportChanged || update.selectionSet || update.focusChanged || this.revision !== this.plugin.settingsRevision || update.startState !== update.state) {
       this.revision = this.plugin.settingsRevision;
       this.decorations = buildDecorations(update.view, this.plugin, this.tree);
     }
@@ -2555,72 +2549,123 @@ var LinksWithIconsSettingTab = class extends import_obsidian.PluginSettingTab {
     super(app, plugin);
     this.plugin = plugin;
   }
+  getSettingDefinitions() {
+    return this.settingRows().map((row) => ({
+      name: row.name,
+      desc: row.desc,
+      searchable: !row.heading,
+      render: (setting) => {
+        var _a;
+        if (row.heading) setting.setHeading();
+        (_a = row.configure) == null ? void 0 : _a.call(row, setting);
+      }
+    }));
+  }
+  // Compatibility path for Obsidian versions before declarative settings were introduced.
   display() {
-    const { containerEl } = this;
-    containerEl.empty();
-    new import_obsidian.Setting(containerEl).setName("Plugin configuration").setHeading();
-    new import_obsidian.Setting(containerEl).setName("Icon size").setDesc("Base size of the icons in pixels (relative to standard 16px text). The icons are rendered using relative sizing (em) to automatically scale with font size and note zoom levels.").addSlider((slider) => slider.setLimits(8, 64, 2).setValue(this.plugin.settings.iconSize).onChange(async (value) => {
-      this.plugin.settings.iconSize = value;
-      await this.plugin.saveSettings();
-    }));
-    new import_obsidian.Setting(containerEl).setName("Dynamic icon sizing").setDesc("Automatically scale icon size based on whether the link is in normal text or in a heading (H1-H6).").addToggle((toggle) => toggle.setValue(this.plugin.settings.enableDynamicSizing).onChange(async (value) => {
-      this.plugin.settings.enableDynamicSizing = value;
-      await this.plugin.saveSettings();
-    }));
-    new import_obsidian.Setting(containerEl).setName("Export icons to PDF").setDesc("Include local OS icons and web URL favicons when exporting notes to PDF.").addToggle((toggle) => toggle.setValue(!this.plugin.settings.hideIconsInPdf).onChange(async (value) => {
-      this.plugin.settings.hideIconsInPdf = !value;
-      await this.plugin.saveSettings();
-    }));
-    new import_obsidian.Setting(containerEl).setName("Local file icons").setHeading();
-    new import_obsidian.Setting(containerEl).setName("Show icons on internal links").setDesc("Display icons for wiki-style links like [[file.xlsx]].").addToggle((toggle) => toggle.setValue(this.plugin.settings.enableInternalLinks).onChange(async (value) => {
-      this.plugin.settings.enableInternalLinks = value;
-      await this.plugin.saveSettings();
-    }));
-    new import_obsidian.Setting(containerEl).setName("Show icons on external local links").setDesc("Display icons for Markdown-style local file links like [name](path).").addToggle((toggle) => toggle.setValue(this.plugin.settings.enableExternalLinks).onChange(async (value) => {
-      this.plugin.settings.enableExternalLinks = value;
-      await this.plugin.saveSettings();
-    }));
-    new import_obsidian.Setting(containerEl).setName("Show folder icons").setDesc("Display the native OS icon for links that point to folders.").addToggle((toggle) => toggle.setValue(this.plugin.settings.enableFolderIcons).onChange(async (value) => {
-      this.plugin.settings.enableFolderIcons = value;
-      await this.plugin.saveSettings();
-    }));
-    new import_obsidian.Setting(containerEl).setName("Folder icon appearance").setDesc("Choose the icon style used for folders. Selecting a Lucide style overrides the native OS explorer folder icon.").addDropdown((dropdown) => dropdown.addOption("native", "Native OS icon").addOption("folder", "Lucide folder").addOption("folder-open", "Lucide folder open").addOption("folder-closed", "Lucide folder closed").addOption("folder-archive", "Lucide folder archive").addOption("book", "Lucide notebook").setValue(this.plugin.settings.folderIconStyle).onChange(async (value) => {
-      this.plugin.settings.folderIconStyle = value;
-      await this.plugin.saveSettings();
-    }));
-    new import_obsidian.Setting(containerEl).setName("Blacklisted extensions").setDesc("Comma-separated list of file extensions to ignore.").addText((text) => text.setPlaceholder("Extensions separated by commas").setValue(this.plugin.settings.blacklistedExtensions).onChange(async (value) => {
-      this.plugin.settings.blacklistedExtensions = value;
-      await this.plugin.saveSettings();
-    }));
-    new import_obsidian.Setting(containerEl).setName("Web URL favicons").setHeading();
-    new import_obsidian.Setting(containerEl).setName("Enable web favicons").setDesc("Show favicons next to external web links.").addToggle((toggle) => toggle.setValue(this.plugin.settings.enableWebFavicons).onChange(async (value) => {
-      this.plugin.settings.enableWebFavicons = value;
-      await this.plugin.saveSettings();
-    }));
-    new import_obsidian.Setting(containerEl).setName("Favicon provider").setDesc("Service used to fetch web URL favicons.").addDropdown((dropdown) => dropdown.addOption("google", "Google").addOption("duckduckgo", "DuckDuckGo").addOption("iconhorse", "Icon Horse").addOption("direct", "Direct favicon.ico").setValue(this.plugin.settings.faviconProvider).onChange(async (value) => {
-      this.plugin.settings.faviconProvider = value;
-      await this.plugin.saveSettings();
-    }));
-    new import_obsidian.Setting(containerEl).setName("Web fallback icon appearance").setDesc("Choose the Lucide icon used when a website has no custom favicon or fails to load.").addDropdown((dropdown) => dropdown.addOption("globe", "Lucide globe").addOption("link", "Lucide link").addOption("external-link", "Lucide external link").addOption("compass", "Lucide compass").addOption("globe-2", "Lucide globe 2").setValue(this.plugin.settings.webFallbackIcon).onChange(async (value) => {
-      this.plugin.settings.webFallbackIcon = value;
-      await this.plugin.saveSettings();
-    }));
-    new import_obsidian.Setting(containerEl).setName("Ignored domains").setDesc("Comma-separated list of domains to ignore, such as example.com.").addText((text) => text.setPlaceholder("github.com, google.com").setValue(this.plugin.settings.ignoredDomains).onChange(async (value) => {
-      this.plugin.settings.ignoredDomains = value;
-      await this.plugin.saveSettings();
-    }));
-    new import_obsidian.Setting(containerEl).setName("Local icon cache").setHeading();
-    new import_obsidian.Setting(containerEl).setName("Persistent disk cache").setDesc("Save extracted local OS icons to disk so they load instantly on restart.").addToggle((toggle) => toggle.setValue(this.plugin.settings.enableDiskCache).onChange(async (value) => {
-      this.plugin.settings.enableDiskCache = value;
-      await this.plugin.saveSettings();
-      await this.plugin.setDiskCacheEnabled(value);
-    }));
+    var _a;
+    this.containerEl.empty();
+    for (const row of this.settingRows()) {
+      const setting = new import_obsidian.Setting(this.containerEl).setName(row.name);
+      if (row.desc) setting.setDesc(row.desc);
+      if (row.heading) setting.setHeading();
+      (_a = row.configure) == null ? void 0 : _a.call(row, setting);
+    }
+  }
+  settingRows() {
     const cacheCount = Object.keys(this.plugin.iconCache).length;
-    new import_obsidian.Setting(containerEl).setName("Clear icon cache").setDesc(`Currently ${cacheCount} icons cached. Click to clear all cached local OS icons.`).addButton((btn) => btn.setButtonText("Clear cache").setWarning().onClick(async () => {
-      await this.plugin.clearIconCache();
-      new import_obsidian.Notice("Icon cache cleared.");
-      this.display();
-    }));
+    return [
+      { name: "Plugin configuration", heading: true },
+      { name: "Icon size", desc: "Base size of the icons in pixels (relative to standard 16px text). The icons are rendered using relative sizing (em) to automatically scale with font size and note zoom levels.", configure: (setting) => {
+        setting.addSlider((slider) => slider.setLimits(8, 64, 2).setValue(this.plugin.settings.iconSize).onChange(async (value) => {
+          this.plugin.settings.iconSize = value;
+          await this.plugin.saveSettings();
+        }));
+      } },
+      { name: "Dynamic icon sizing", desc: "Automatically scale icon size based on whether the link is in normal text or in a heading (H1-H6).", configure: (setting) => {
+        setting.addToggle((toggle) => toggle.setValue(this.plugin.settings.enableDynamicSizing).onChange(async (value) => {
+          this.plugin.settings.enableDynamicSizing = value;
+          await this.plugin.saveSettings();
+        }));
+      } },
+      { name: "Export icons to PDF", desc: "Include local OS icons and web URL favicons when exporting notes to PDF.", configure: (setting) => {
+        setting.addToggle((toggle) => toggle.setValue(!this.plugin.settings.hideIconsInPdf).onChange(async (value) => {
+          this.plugin.settings.hideIconsInPdf = !value;
+          await this.plugin.saveSettings();
+        }));
+      } },
+      { name: "Local file icons", heading: true },
+      { name: "Show icons on internal links", desc: "Display icons for wiki-style links like [[file.xlsx]].", configure: (setting) => {
+        setting.addToggle((toggle) => toggle.setValue(this.plugin.settings.enableInternalLinks).onChange(async (value) => {
+          this.plugin.settings.enableInternalLinks = value;
+          await this.plugin.saveSettings();
+        }));
+      } },
+      { name: "Show icons on external local links", desc: "Display icons for Markdown-style local file links like [name](path).", configure: (setting) => {
+        setting.addToggle((toggle) => toggle.setValue(this.plugin.settings.enableExternalLinks).onChange(async (value) => {
+          this.plugin.settings.enableExternalLinks = value;
+          await this.plugin.saveSettings();
+        }));
+      } },
+      { name: "Show folder icons", desc: "Display the native OS icon for links that point to folders.", configure: (setting) => {
+        setting.addToggle((toggle) => toggle.setValue(this.plugin.settings.enableFolderIcons).onChange(async (value) => {
+          this.plugin.settings.enableFolderIcons = value;
+          await this.plugin.saveSettings();
+        }));
+      } },
+      { name: "Folder icon appearance", desc: "Choose the icon style used for folders. Selecting a Lucide style overrides the native OS explorer folder icon.", configure: (setting) => {
+        setting.addDropdown((dropdown) => dropdown.addOption("native", "Native OS icon").addOption("folder", "Lucide folder").addOption("folder-open", "Lucide folder open").addOption("folder-closed", "Lucide folder closed").addOption("folder-archive", "Lucide folder archive").addOption("book", "Lucide notebook").setValue(this.plugin.settings.folderIconStyle).onChange(async (value) => {
+          this.plugin.settings.folderIconStyle = value;
+          await this.plugin.saveSettings();
+        }));
+      } },
+      { name: "Blacklisted extensions", desc: "Comma-separated list of file extensions to ignore.", configure: (setting) => {
+        setting.addText((text) => text.setPlaceholder("Extensions separated by commas").setValue(this.plugin.settings.blacklistedExtensions).onChange(async (value) => {
+          this.plugin.settings.blacklistedExtensions = value;
+          await this.plugin.saveSettings();
+        }));
+      } },
+      { name: "Web URL favicons", heading: true },
+      { name: "Enable web favicons", desc: "Show favicons next to external web links.", configure: (setting) => {
+        setting.addToggle((toggle) => toggle.setValue(this.plugin.settings.enableWebFavicons).onChange(async (value) => {
+          this.plugin.settings.enableWebFavicons = value;
+          await this.plugin.saveSettings();
+        }));
+      } },
+      { name: "Favicon provider", desc: "Service used to fetch web URL favicons.", configure: (setting) => {
+        setting.addDropdown((dropdown) => dropdown.addOption("google", "Google").addOption("duckduckgo", "DuckDuckGo").addOption("iconhorse", "Icon Horse").addOption("direct", "Direct favicon.ico").setValue(this.plugin.settings.faviconProvider).onChange(async (value) => {
+          this.plugin.settings.faviconProvider = value;
+          await this.plugin.saveSettings();
+        }));
+      } },
+      { name: "Web fallback icon appearance", desc: "Choose the Lucide icon used when a website has no custom favicon or fails to load.", configure: (setting) => {
+        setting.addDropdown((dropdown) => dropdown.addOption("globe", "Lucide globe").addOption("link", "Lucide link").addOption("external-link", "Lucide external link").addOption("compass", "Lucide compass").addOption("globe-2", "Lucide globe 2").setValue(this.plugin.settings.webFallbackIcon).onChange(async (value) => {
+          this.plugin.settings.webFallbackIcon = value;
+          await this.plugin.saveSettings();
+        }));
+      } },
+      { name: "Ignored domains", desc: "Comma-separated list of domains to ignore, such as example.com.", configure: (setting) => {
+        setting.addText((text) => text.setPlaceholder("github.com, google.com").setValue(this.plugin.settings.ignoredDomains).onChange(async (value) => {
+          this.plugin.settings.ignoredDomains = value;
+          await this.plugin.saveSettings();
+        }));
+      } },
+      { name: "Local icon cache", heading: true },
+      { name: "Persistent disk cache", desc: "Save extracted local OS icons to disk so they load instantly on restart.", configure: (setting) => {
+        setting.addToggle((toggle) => toggle.setValue(this.plugin.settings.enableDiskCache).onChange(async (value) => {
+          this.plugin.settings.enableDiskCache = value;
+          await this.plugin.saveSettings();
+          await this.plugin.setDiskCacheEnabled(value);
+        }));
+      } },
+      { name: "Clear icon cache", desc: `Currently ${cacheCount} icons cached. Click to clear all cached local OS icons.`, configure: (setting) => {
+        setting.addButton((btn) => btn.setButtonText("Clear cache").onClick(async () => {
+          await this.plugin.clearIconCache();
+          new import_obsidian.Notice("Icon cache cleared.");
+          setting.setDesc(`Currently ${Object.keys(this.plugin.iconCache).length} icons cached. Click to clear all cached local OS icons.`);
+        }));
+      } }
+    ];
   }
 };
 var _LinksWithIconsPlugin = class _LinksWithIconsPlugin extends import_obsidian.Plugin {
@@ -2679,12 +2724,12 @@ var _LinksWithIconsPlugin = class _LinksWithIconsPlugin extends import_obsidian.
           }
           const emSize = getIconSizeEm(this.settings, headingLevel);
           const ownerDocument = linkEl.ownerDocument;
-          const span = ownerDocument.createElement("span");
+          const span = ownerDocument.createDocumentFragment().createSpan();
           span.addClass("links-with-icons-favicon");
           span.toggleClass("links-with-icons-hide-in-pdf", this.settings.hideIconsInPdf);
           span.style.width = emSize + "em";
           span.style.height = emSize + "em";
-          const img = ownerDocument.createElement("img");
+          const img = ownerDocument.createDocumentFragment().createEl("img");
           img.src = getFaviconUrl(this.settings.faviconProvider, domain, 64);
           img.alt = "";
           img.referrerPolicy = "no-referrer";
@@ -2733,7 +2778,7 @@ var _LinksWithIconsPlugin = class _LinksWithIconsPlugin extends import_obsidian.
           }
           const emSize = getIconSizeEm(this.settings, headingLevel);
           const ownerDocument = linkEl.ownerDocument;
-          const span = ownerDocument.createElement("span");
+          const span = ownerDocument.createDocumentFragment().createSpan();
           span.addClass("links-with-icons-osicon");
           span.toggleClass("links-with-icons-hide-in-pdf", this.settings.hideIconsInPdf);
           span.style.width = emSize + "em";
@@ -2745,7 +2790,7 @@ var _LinksWithIconsPlugin = class _LinksWithIconsPlugin extends import_obsidian.
             const iconId = this.settings.folderIconStyle;
             (0, import_obsidian.setIcon)(span, iconId);
           } else if (this.iconCache[cacheKey]) {
-            const img = ownerDocument.createElement("img");
+            const img = ownerDocument.createDocumentFragment().createEl("img");
             img.src = this.iconCache[cacheKey];
             span.appendChild(img);
           } else if (!import_obsidian.Platform.isWin) {
@@ -2755,7 +2800,7 @@ var _LinksWithIconsPlugin = class _LinksWithIconsPlugin extends import_obsidian.
             (0, import_obsidian.setIcon)(span, getLucideIconForExtension(targetExt, isFolder));
             void this.getIconForFile(queryPath, useAttributes).then((iconData) => {
               if (iconData && span.isConnected) {
-                const img = ownerDocument.createElement("img");
+                const img = ownerDocument.createDocumentFragment().createEl("img");
                 img.src = iconData;
                 span.empty();
                 span.appendChild(img);
@@ -2965,9 +3010,9 @@ public class ShellIcon {
 "@ -ReferencedAssemblies System.Drawing
 Write-Output ([ShellIcon]::GetBase64Icon('${escapedPath}', ${psBool}, ${imgListIdx}))
 `;
-      const buffer = Buffer.from(psScript, "utf16le");
-      const encodedCommand = buffer.toString("base64");
       const req = window["require"];
+      const { Buffer: NodeBuffer } = req("buffer");
+      const encodedCommand = NodeBuffer.from(psScript, "utf16le").toString("base64");
       const childProcess = req("child_process");
       const processHandle = childProcess.execFile(
         "powershell.exe",

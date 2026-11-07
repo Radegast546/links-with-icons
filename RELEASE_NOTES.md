@@ -1,22 +1,15 @@
-# Links with Icons 1.1.0
+# Links with Icons 1.1.1
 
-Recognize files, folders, and websites at a glance, so you can scan your notes faster and find the right resource.
+Show file, folder, and website icons next to links in your notes. On Windows, use the familiar application icons from File Explorer.
 
-## What changed
+This maintenance release addresses the source and CSS feedback from the 1.1.0 community review:
 
-- **Cleaner reading lists:** unresolved wiki links no longer get misleading file icons, including book titles containing periods.
-- **Open the right resource:** attachment icons open through Obsidian and relative links resolve against the note containing them, including split panes.
-- **More reliable rendering:** genuine small website icons are preserved, settings refresh open notes, and mobile attachments keep their file-type icons.
-- **Better Markdown handling:** embeds, code, frontmatter, hidden comments, and escaped wiki syntax stay undecorated. Link titles and nested parentheses are handled correctly.
-- **PDF export control:** choose whether icons appear in exported PDFs from the plugin settings.
-- **Faster feedback:** file-type icons appear while Windows retrieves native icons, and Markdown parsing reuses unchanged content while typing.
-- **More robust Windows support:** fixes for encoded file paths, extraction timeouts, cancellation, and cache clearing.
-- **Accessible navigation:** Live Preview icons support keyboard activation.
+- Fix inline icons disappearing when the cursor moves to the end of a line, and restore icons when leaving the link or editor.
+- Find plugin settings through Obsidian's settings search on version 1.13 and later.
+- Preserve the existing settings interface on older supported Obsidian versions.
+- Use Obsidian's DOM helpers for rendering icons, including in pop-out windows.
+- Explicitly type the Windows icon-encoding helper.
+- Remove deprecated settings calls and unnecessary print CSS priority.
+- Clarify the README and plugin description with concrete examples.
 
-The plugin description and README now explain the everyday benefits and include practical examples. Ordinary Markdown notes remain undecorated. Windows uses native application icons; other platforms use built-in file-type icons.
-
-## Installation and updates
-
-In Obsidian, open **Settings → Community plugins**, check for updates, and update **Links with Icons**. For manual installation, copy `main.js`, `manifest.json`, and `styles.css` from this release into the existing plugin directory, then restart Obsidian.
-
-Release assets are built in GitHub Actions and include build-provenance attestations. Validation includes automated regression tests, typechecking, linting, and a Windows native-icon smoke test.
+Downloadable plugin files remain `main.js`, `manifest.json`, and `styles.css`.

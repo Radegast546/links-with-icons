@@ -1,9 +1,9 @@
 {
 	"id": "links-with-icons",
 	"name": "Links with Icons",
-	"version": "1.1.0",
+	"version": "1.1.1",
 	"minAppVersion": "1.4.0",
-	"description": "Recognize files, folders, and websites at a glance with icons beside your links. Scan your notes faster and find the right resource.",
+	"description": "Show file, folder, and website icons next to links in your notes. On Windows, use the familiar application icons from File Explorer.",
 	"author": "Radegast546",
 	"authorUrl": "https://github.com/Radegast546",
 	"isDesktopOnly": false
