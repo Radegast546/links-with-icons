@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.2 — Unreleased
+
+- Remove native document-fragment creation from all icon rendering paths. Use Obsidian helpers directly and adopt elements into the target document for pop-out compatibility.
+
 ## 1.1.1 — 2026-11-07
 
 - Add a screenshot showing file, folder, and website icons in real notes.

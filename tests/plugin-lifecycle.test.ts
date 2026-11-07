@@ -150,7 +150,9 @@ describe('Reading View integration', () => {
         const callback = (plugin as unknown as { postProcessor: MarkdownPostProcessor }).postProcessor;
         const created: unknown[] = [];
         const makeElement = () => ({ addClass: vi.fn(), toggleClass: vi.fn(), style: {}, appendChild: vi.fn() });
-        const ownerDocument = { createDocumentFragment: () => ({ createSpan: makeElement, createEl: makeElement }) };
+        vi.stubGlobal('createSpan', makeElement);
+        vi.stubGlobal('createEl', makeElement);
+        const ownerDocument = { adoptNode: vi.fn((node: unknown) => node) };
         const makeLink = (target: string) => ({
             querySelector: () => null,
             getAttribute: (attribute: string) => attribute === 'data-href' ? target : null,
@@ -161,6 +163,7 @@ describe('Reading View integration', () => {
         const el = { querySelectorAll: () => [makeLink('report.pdf'), makeLink('Robinson Crusoe (Josef V. Pleva)')] };
         await callback(el as unknown as HTMLElement, { sourcePath: 'notes/project.md' } as MarkdownPostProcessorContext);
         expect(created).toHaveLength(1);
+        expect(ownerDocument.adoptNode).toHaveBeenCalledTimes(1);
         expect(resolve).toHaveBeenCalledWith('report.pdf', 'notes/project.md');
         plugin.onunload();
     });

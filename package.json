@@ -1,6 +1,6 @@
 {
   "name": "links-with-icons",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "Show file, folder, and website icons next to links in your notes. On Windows, use the familiar application icons from File Explorer.",
   "main": "main.js",
   "scripts": {

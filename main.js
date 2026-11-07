@@ -2315,7 +2315,7 @@ var IconWidget = class extends import_view.WidgetType {
   }
   toDOM() {
     const ownerDocument = this.view.dom.ownerDocument;
-    const span = ownerDocument.createDocumentFragment().createSpan();
+    const span = ownerDocument.adoptNode(createSpan());
     const size = `${getIconSizeEm(this.plugin.settings, this.headingLevel)}em`;
     span.addClass("links-with-icons-osicon");
     span.toggleClass("links-with-icons-hide-in-pdf", this.plugin.settings.hideIconsInPdf);
@@ -2328,7 +2328,7 @@ var IconWidget = class extends import_view.WidgetType {
     if (isFolder && this.plugin.settings.folderIconStyle !== "native") {
       (0, import_obsidian.setIcon)(span, this.plugin.settings.folderIconStyle);
     } else if (cachedIcon) {
-      const img = ownerDocument.createDocumentFragment().createEl("img");
+      const img = ownerDocument.adoptNode(createEl("img"));
       img.src = cachedIcon;
       span.appendChild(img);
     } else if (!import_obsidian.Platform.isWin) {
@@ -2338,7 +2338,7 @@ var IconWidget = class extends import_view.WidgetType {
       void this.plugin.getIconForFile(this.queryPath, this.useAttributes).then((iconData) => {
         if (this.settingsRevision !== this.plugin.settingsRevision) return;
         if (iconData && span.isConnected) {
-          const img = ownerDocument.createDocumentFragment().createEl("img");
+          const img = ownerDocument.adoptNode(createEl("img"));
           img.src = iconData;
           span.empty();
           span.appendChild(img);
@@ -2374,13 +2374,13 @@ var FaviconWidget = class extends import_view.WidgetType {
   }
   toDOM() {
     const ownerDocument = this.view.dom.ownerDocument;
-    const span = ownerDocument.createDocumentFragment().createSpan();
+    const span = ownerDocument.adoptNode(createSpan());
     const size = `${getIconSizeEm(this.plugin.settings, this.headingLevel)}em`;
     span.addClass("links-with-icons-favicon");
     span.toggleClass("links-with-icons-hide-in-pdf", this.plugin.settings.hideIconsInPdf);
     span.style.width = size;
     span.style.height = size;
-    const img = ownerDocument.createDocumentFragment().createEl("img");
+    const img = ownerDocument.adoptNode(createEl("img"));
     img.src = getFaviconUrl(this.plugin.settings.faviconProvider, this.domain, 64);
     img.alt = "";
     img.referrerPolicy = "no-referrer";
@@ -2724,12 +2724,12 @@ var _LinksWithIconsPlugin = class _LinksWithIconsPlugin extends import_obsidian.
           }
           const emSize = getIconSizeEm(this.settings, headingLevel);
           const ownerDocument = linkEl.ownerDocument;
-          const span = ownerDocument.createDocumentFragment().createSpan();
+          const span = ownerDocument.adoptNode(createSpan());
           span.addClass("links-with-icons-favicon");
           span.toggleClass("links-with-icons-hide-in-pdf", this.settings.hideIconsInPdf);
           span.style.width = emSize + "em";
           span.style.height = emSize + "em";
-          const img = ownerDocument.createDocumentFragment().createEl("img");
+          const img = ownerDocument.adoptNode(createEl("img"));
           img.src = getFaviconUrl(this.settings.faviconProvider, domain, 64);
           img.alt = "";
           img.referrerPolicy = "no-referrer";
@@ -2778,7 +2778,7 @@ var _LinksWithIconsPlugin = class _LinksWithIconsPlugin extends import_obsidian.
           }
           const emSize = getIconSizeEm(this.settings, headingLevel);
           const ownerDocument = linkEl.ownerDocument;
-          const span = ownerDocument.createDocumentFragment().createSpan();
+          const span = ownerDocument.adoptNode(createSpan());
           span.addClass("links-with-icons-osicon");
           span.toggleClass("links-with-icons-hide-in-pdf", this.settings.hideIconsInPdf);
           span.style.width = emSize + "em";
@@ -2790,7 +2790,7 @@ var _LinksWithIconsPlugin = class _LinksWithIconsPlugin extends import_obsidian.
             const iconId = this.settings.folderIconStyle;
             (0, import_obsidian.setIcon)(span, iconId);
           } else if (this.iconCache[cacheKey]) {
-            const img = ownerDocument.createDocumentFragment().createEl("img");
+            const img = ownerDocument.adoptNode(createEl("img"));
             img.src = this.iconCache[cacheKey];
             span.appendChild(img);
           } else if (!import_obsidian.Platform.isWin) {
@@ -2800,7 +2800,7 @@ var _LinksWithIconsPlugin = class _LinksWithIconsPlugin extends import_obsidian.
             (0, import_obsidian.setIcon)(span, getLucideIconForExtension(targetExt, isFolder));
             void this.getIconForFile(queryPath, useAttributes).then((iconData) => {
               if (iconData && span.isConnected) {
-                const img = ownerDocument.createDocumentFragment().createEl("img");
+                const img = ownerDocument.adoptNode(createEl("img"));
                 img.src = iconData;
                 span.empty();
                 span.appendChild(img);
