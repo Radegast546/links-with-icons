@@ -33,7 +33,7 @@
     "@types/node": "^22.15.17",
     "@eslint/js": "^9.39.4",
     "esbuild": "^0.28.2",
-    "eslint": "^9.39.4",
+    "eslint": "^10.14.0",
     "eslint-plugin-obsidianmd": "^0.5.1",
     "globals": "^17.6.0",
     "obsidian": "1.14.4",
